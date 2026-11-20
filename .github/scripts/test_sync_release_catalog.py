@@ -20,7 +20,7 @@ class SyncReleaseCatalogTests(unittest.TestCase):
             catalog.write_text(json.dumps([
                 {"name": "provider", "install": "rpi package link deepseek --path packages/provider", "prebuilt_manifest": "stale"},
                 {"name": "published", "install": "rpi install published"},
-                {"name": "prebuilt-only", "install": "rpi install prebuilt-only --github example/packages"},
+                {"name": "prebuilt-only", "install": "rpi install prebuilt-only --github old/upstream"},
             ]), encoding="utf-8")
             metadata = {"packages": [
                 {"name": "provider", "version": "0.1.0", "publish": [], "repository": "https://github.com/example/packages"},
@@ -40,6 +40,7 @@ class SyncReleaseCatalogTests(unittest.TestCase):
             self.assertNotIn("prebuilt_manifest", source)
             self.assertEqual(published["prebuilt_manifest"], "https://github.com/example/packages/releases/download/published-v1.2.3/rpi-extension.json")
             self.assertEqual(prebuilt["prebuilt_manifest"], "https://github.com/example/packages/releases/download/prebuilt-only-v0.1.0/rpi-extension.json")
+            self.assertEqual(published["install"], "rpi install published --github example/packages")
             self.assertEqual(prebuilt["install"], "rpi install prebuilt-only --github example/packages")
 
 

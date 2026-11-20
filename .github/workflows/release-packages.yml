@@ -76,10 +76,20 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
+          sudo apt-get install -y libasound2-dev libssl-dev pkg-config
       - uses: Swatinem/rust-cache@v2
         with:
           key: backfill-${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        if: contains(inputs.package_releases, 'rpi-web-v')
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: packages/rpi-web/frontend/package-lock.json
+      - name: Build embedded Web frontend
+        if: contains(inputs.package_releases, 'rpi-web-v')
+        working-directory: packages/rpi-web/frontend
+        run: npm ci && npm run build
       - name: Build only the requested extension libraries
         env:
           PACKAGE_RELEASES: ${{ inputs.package_releases }}
@@ -135,6 +145,16 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: .release-tools
+      - uses: actions/setup-node@v4
+        if: contains(inputs.package_releases, 'rpi-web-v')
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: packages/rpi-web/frontend/package-lock.json
+      - name: Build embedded Web frontend for musl
+        if: contains(inputs.package_releases, 'rpi-web-v')
+        working-directory: packages/rpi-web/frontend
+        run: npm ci && npm run build
       - name: Build selected x86_64 musl package artifacts
         env:
           SOURCE_REF: ${{ inputs.source_ref }}

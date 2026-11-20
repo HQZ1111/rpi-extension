@@ -15,6 +15,8 @@ concurrency:
 
 jobs:
   should-release:
+    # This imported workflow must never publish the upstream crates from a copy.
+    if: github.repository == 'pi-rust/rpi-package'
     name: Check for unreleased main changes
     runs-on: ubuntu-latest
     outputs:
@@ -46,6 +48,7 @@ jobs:
   release:
     # Manual runs remain available for an explicit retry or emergency release.
     if: >-
+      github.repository == 'pi-rust/rpi-package' &&
       needs.should-release.outputs.changed == 'true' &&
       github.ref == 'refs/heads/main' &&
       github.event_name == 'workflow_dispatch'

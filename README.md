@@ -1,4 +1,11 @@
-# rpi-packages
+# rpi-extension
+
+This repository imports the `pi-rust/rpi-package` main tree and publishes its
+own GitHub prebuilt extension releases, **not** duplicate crates.io packages.
+Use **Actions → Publish GitHub extensions → Run workflow** on `main` (`all`, or
+comma-separated package names). No additional secrets are needed for GitHub
+Releases. See [the release guide](docs/github-releases.md) for validation,
+immutable version tags, optional CDN mirrors and Android signing requirements.
 
 Rust-native extension packages for the `rpi` agent, built against the stable
 `rpi-plugin-sdk` ABI from `pi-rust`.
@@ -85,7 +92,7 @@ provider IDs, model catalogs and authentication policies. Install or upgrade
 one package; maintain vendor implementations in separate modules.
 
 ```bash
-rpi install rpi-providers --github pi-rust/rpi-package
+rpi install rpi-providers --github pi-rust/rpi-extension
 ```
 
 Starting with 0.1.2, this package is published to crates.io and distributed as
@@ -107,7 +114,7 @@ Download and extract a [Web release](https://github.com/pi-rust/rpi-package/rele
 
 Open [http://127.0.0.1:3030/](http://127.0.0.1:3030/), select a project, and create a session. On Windows, use `rpi-web.exe` and `rpi.exe`.
 
-The [Web user guide](packages/rpi-web/README.md) covers Windows / Linux / macOS setup, project creation, model credentials, password login, remote access, persistence, and upgrades. Web 0.1.7 uses `rpi --webserver` to start the native extension with embedded frontend resources; `--web` remains a compatibility alias. Install it with `rpi install rpi-web --github pi-rust/rpi-package`, or from a checkout using `rpi install rpi-web --path packages/rpi-web`.
+The [Web user guide](packages/rpi-web/README.md) covers Windows / Linux / macOS setup, project creation, model credentials, password login, remote access, persistence, and upgrades. Web 0.1.7 uses `rpi --webserver` to start the native extension with embedded frontend resources; `--web` remains a compatibility alias. Install it with `rpi install rpi-web --github pi-rust/rpi-extension`, or from a checkout using `rpi install rpi-web --path packages/rpi-web`.
 
 Web 0.1.1 supports `.rpi/web.json` startup settings. Run `rpi-web --init` once in a project directory, configure the host and assets paths, then use `rpi-web` for subsequent starts. Global defaults can be stored in `~/.rpi/web.json`, and CLI arguments provide temporary overrides. Users of Web 0.1.0 must upgrade to use configuration files.
 
@@ -243,15 +250,15 @@ consumer installation mechanism. The cross-platform consumer command is built
 into the `rpi` host:
 
 ```powershell
-rpi install rpi-todo
-rpi install rpi-todo --version 0.2.3
+rpi install rpi-todo --github pi-rust/rpi-extension
+rpi install rpi-todo --github pi-rust/rpi-extension --version 0.3.4
 ```
 
 For GitHub prebuilt installation, select this repository explicitly:
 
 ```powershell
-rpi install rpi-ui-adapter --github pi-rust/rpi-package
-rpi install rpi-providers --github pi-rust/rpi-package
+rpi install rpi-ui-adapter --github pi-rust/rpi-extension
+rpi install rpi-providers --github pi-rust/rpi-extension
 rpi update
 ```
 

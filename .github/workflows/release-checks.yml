@@ -1,0 +1,40 @@
+name: Release tooling checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/scripts/**'
+      - '.github/workflows/release-*.yml'
+      - 'catalog/packages.json'
+      - 'Cargo.toml'
+      - 'tools/build-musl.sh'
+  pull_request:
+    paths:
+      - '.github/scripts/**'
+      - '.github/workflows/release-*.yml'
+      - 'catalog/packages.json'
+      - 'Cargo.toml'
+      - 'tools/build-musl.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test release preparation, manifests, checksums and version helpers
+        run: python -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Check catalog and repository discovery are synchronized
+        run: |
+          python .github/scripts/sync-release-catalog.py
+          git diff --exit-code -- catalog/packages.json
+          python .github/scripts/github-release.py plan --repository "$GITHUB_REPOSITORY"

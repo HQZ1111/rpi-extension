@@ -7,48 +7,29 @@ not substitutes for the requested package version.
 
 ## Release workflow
 
-Every push or PR merge to `main` runs
-`.github/workflows/release-cargo.yml`. release-plz compares the workspace with
-crates.io, updates versions and package changelogs for unpublished changes,
-and synchronizes `catalog/packages.json`. Ordinary changes to the current
-`0.x` packages get a patch bump; conventional breaking-change commits can
-increase the minor version. Packages inheriting the workspace version share
-that version. Already prepared, unpublished versions are preserved.
-Release analysis includes history after the migration to registry SDK
-dependencies; older commits requiring an external `pi-rust` checkout are
-excluded in the CI checkout so historical package comparisons can run.
+This repository uses **Publish GitHub extensions** (`release-github.yml`) on
+manual dispatch from `main`. It prepares immutable version tags and draft
+releases, reuses `release-packages.yml` for the supported native platforms,
+validates and uploads archives before discovery manifests, then publishes the
+drafts only after success. GitHub's built-in token is sufficient; RustFS/CDN
+mirroring is optional. No duplicate crates.io packages are published.
 
-The workflow tests the workspace and dry-runs Cargo publishing before creating
-and merging a version PR. It respects protected `main` without directly pushing
-to it. It then publishes unpublished extension crates and creates per-package
-tags (`<package>-v<version>`) and GitHub Releases.
-The installer is excluded because it has `publish = false`. Publishing runs
-in the same workflow as the version update. Runs are serialized, and a failed
-release can be retried from the Actions UI or with `workflow_dispatch` on `main`.
+See [the GitHub release guide](github-releases.md) for commands, retries,
+version bumping, optional credentials and Android environment requirements.
+The upstream `release-cargo.yml` is retained for reference but disabled and
+repository-guarded here. It requires release history/baselines that were not
+imported with the main source tree.
 
-Configure the repository Actions secret `CARGO_REGISTRY_TOKEN` with crates.io
-publishing permission for all extension crates, including permission to create
-any names that have not been published yet. The workflow's `GITHUB_TOKEN` needs
-permission to create and merge the version PR and create tags/releases. Enable
-Actions PR creation in the repository settings. If branch rules require
-approvals or checks, the version PR must satisfy them before releasing.
-If organization policy blocks Actions PR creation, set the optional
-`RELEASE_GITHUB_TOKEN` secret with repository Contents and Pull requests write
-permissions instead.
-
-After crate publishing, `release-assets.yml` automatically builds Windows x64,
-Linux x64/ARM64 GNU, Linux x64 musl, and macOS Intel/Apple Silicon binaries
-from the exact release commit. Each package Release receives individual
-extension archives and an `rpi-extension.json` manifest with download URLs,
-SHA-256 hashes, target triples, library names and SDK ABI. A separate bundle
-Release contains the catalog collection, installer and standalone ACP bridge;
-archived host-owned packages are intentionally omitted. The existing
-`release-unix.yml` manual entry point uses the same target set.
+Each package Release receives individual extension archives and an
+`rpi-extension.json` manifest with download URLs, SHA-256 hashes, target triples,
+library names and SDK ABI. `release-assets.yml` / `release-unix.yml` remain
+available for full bundles and standalone bridges; those are separate from
+the per-extension GitHub-only entry point.
 
 Host developers can implement prebuilt installation using the discovery
-protocol below and its [JSON schema](rpi-extension.schema.json). Discover the
-repository from crates.io metadata, then use the requested package's versioned Release manifest;
-packages in this repository do not all share one version.
+protocol below and its [JSON schema](rpi-extension.schema.json). In this
+repository, use `--github pi-rust/rpi-extension` to override upstream crates.io
+repository metadata. Packages have independent versions.
 
 ## Discovery
 

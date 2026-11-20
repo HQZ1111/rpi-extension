@@ -2,6 +2,7 @@
 
 import json
 import pathlib
+import re
 import subprocess
 
 metadata = json.loads(subprocess.check_output([
@@ -24,4 +25,12 @@ for entry in catalog:
         f"{package['repository'].removesuffix('.git').rstrip('/')}/releases/download/"
         f"{package['name']}-v{package['version']}/rpi-extension.json"
     )
+    # Explicit GitHub discovery is required when the crates.io metadata still
+    # belongs to the upstream repository. Leave source-only link commands alone.
+    if entry.get("install", "").startswith("rpi install "):
+        repository = package["repository"].removesuffix(".git").rstrip("/")
+        prefix = "https://github.com/"
+        if repository.startswith(prefix):
+            install = re.sub(r"\s+--github\s+\S+", "", entry["install"])
+            entry["install"] = f"{install} --github {repository[len(prefix):]}"
 path.write_text(json.dumps(catalog, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

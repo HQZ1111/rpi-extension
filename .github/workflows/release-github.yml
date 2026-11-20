@@ -1,0 +1,79 @@
+name: Publish GitHub extensions
+
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: 'all, or comma-separated catalog package names (e.g. rpi-todo,rpi-webfetch)'
+        type: string
+        default: all
+        required: true
+      source_ref:
+        description: 'Optional exact main-history source commit for retrying an existing version'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-github-extensions
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      source_ref: ${{ steps.prepare.outputs.source_ref }}
+      package_releases: ${{ steps.prepare.outputs.package_releases }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Require a reviewed main-history source
+        run: git merge-base --is-ancestor HEAD origin/main
+      - name: Validate versions and prepare immutable tags and draft releases
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGES: ${{ inputs.packages }}
+        run: python .github/scripts/github-release.py prepare --packages "$PACKAGES"
+
+  build:
+    needs: prepare
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-packages.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      package_releases: ${{ needs.prepare.outputs.package_releases }}
+    secrets: inherit
+
+  finalize:
+    needs: [prepare, build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Publish drafts only after all archives and discovery manifests are uploaded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REF: ${{ needs.prepare.outputs.source_ref }}
+          PACKAGE_RELEASES: ${{ needs.prepare.outputs.package_releases }}
+        run: |
+          python .github/scripts/github-release.py finalize \
+            --source-ref "$SOURCE_REF" --tags "$PACKAGE_RELEASES" | tee -a "$GITHUB_STEP_SUMMARY"
