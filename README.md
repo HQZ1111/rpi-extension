@@ -1,14 +1,19 @@
 # rpi-extension
 
-This repository imports the `pi-rust/rpi-package` main tree and publishes its
-own GitHub prebuilt extension releases, **not** duplicate crates.io packages.
-Use **Actions → Publish GitHub extensions → Run workflow** on `main` (`all`, or
-comma-separated package names). No additional secrets are needed for GitHub
-Releases. See [the release guide](docs/github-releases.md) for validation,
-immutable version tags, optional CDN mirrors and Android signing requirements.
+**English** | [简体中文](README.zh-CN.md)
 
 Rust-native extension packages for the `rpi` agent, built against the stable
 `rpi-plugin-sdk` ABI from `pi-rust`.
+
+This repository imports the `pi-rust/rpi-package` main tree and publishes its
+own GitHub prebuilt extension releases, **not** duplicate crates.io packages.
+Prebuilt archives and `rpi-extension.json` manifests are available under
+[Releases](https://github.com/pi-rust/rpi-extension/releases) for six target
+platforms. Publishing is a manual dispatch of
+**Actions → Publish GitHub extensions** on `main`; GitHub's built-in token is
+enough, and no crates.io credentials are involved. The imported
+`release-cargo.yml` is disabled here and guarded to the upstream repository.
+See [the release guide](docs/github-releases.md).
 
 The workspace includes tools, workflow extensions, provider integrations and
 client adapters. Each package has its own version and setup guide. The
@@ -95,17 +100,21 @@ one package; maintain vendor implementations in separate modules.
 rpi install rpi-providers --github pi-rust/rpi-extension
 ```
 
-Starting with 0.1.2, this package is published to crates.io and distributed as
-prebuilt archives through GitHub Releases. It uses `rpi-plugin-sdk` 0.6.3 with the optional
-`provider` feature and matching `rpi-ai` 0.6.3; use the rpi 0.6.3 host for this
-package. See [the package guide](packages/rpi-providers/README.md) for compatibility,
+Starting with 0.1.2, this package is distributed as prebuilt archives through
+GitHub Releases. It uses `rpi-plugin-sdk` 0.6.3 with the optional `provider`
+feature and matching `rpi-ai` 0.6.3; use the rpi 0.6.3 host for this package.
+See [the package guide](packages/rpi-providers/README.md) for compatibility,
 source linking, migration and tests.
 
 ## Web workspace (rpi-web)
 
 `rpi-web` provides project-based conversations in a browser, with streaming replies, tool interactions, Markdown rendering, file previews, and Git diffs. The interface supports English and Simplified Chinese. It supports a native extension entry point and a standalone program, sharing the same Web core.
 
-Download and extract a [Web release](https://github.com/pi-rust/rpi-package/releases?q=rpi-web-v), keep the complete `assets/` directory, and install the [rpi 0.7.0 host](https://github.com/bigfish1913/pi-rust/releases/tag/v0.7.0). Configure model credentials for the service process before starting:
+The per-extension archive for a published version is on this repository's
+[Releases](https://github.com/pi-rust/rpi-extension/releases?q=rpi-web-v). The
+portable Web bundle with the extracted `assets/` directory is produced by the
+manual `release-web.yml` workflow; run it from `main` before following the
+standalone start commands. Install the [rpi 0.7.0 host](https://github.com/bigfish1913/pi-rust/releases/tag/v0.7.0) and configure model credentials for the service process before starting:
 
 ```bash
 # Run from the extracted Web directory with an existing project directory.
@@ -254,7 +263,9 @@ rpi install rpi-todo --github pi-rust/rpi-extension
 rpi install rpi-todo --github pi-rust/rpi-extension --version 0.3.4
 ```
 
-For GitHub prebuilt installation, select this repository explicitly:
+For GitHub prebuilt installation, select this repository explicitly, because
+the crates.io metadata of these packages still points at the upstream
+repository:
 
 ```powershell
 rpi install rpi-ui-adapter --github pi-rust/rpi-extension
@@ -265,11 +276,10 @@ rpi update
 Use `rpi uninstall <package>` to remove a package installed through the host.
 Check each package guide for host requirements and source-install alternatives.
 
-Users can also download a platform bundle from
-[GitHub Releases](https://github.com/pi-rust/rpi-package/releases) and run its
-installer.
-The archive is self-contained: it carries the extension libraries, the catalog
-and the `rpi-package-install` binary itself, so no shell script is involved.
+A self-contained platform bundle (extension libraries, catalog and the
+`rpi-package-install` binary) is produced by the manual `release-assets.yml` and
+`release-unix.yml` entry points and attached to this repository's Releases. No
+shell script is involved:
 
 ```bash
 # Linux / macOS
@@ -323,28 +333,44 @@ The profile is optional when `defaultProfile` is set in `.rpi/im.json` (or
 `~/.rpi/agent/im.json`). Set the app secret through the profile's environment
 variable before starting the process.
 
-## Automatic releases and prebuilt extensions
+## Releases and prebuilt extensions
 
-Merging to `main` runs version generation and Cargo publishing. The workflow
-updates packages with unpublished changes and publishes their new versions;
-already published versions are skipped. Package contents and dependency changes
-determine which packages need a release.
+Releases in this repository are GitHub-only. Nothing is published to crates.io,
+and version numbers are not bumped automatically; package versions stay exactly
+as they are in the imported tree until a maintainer changes them.
 
-When package releases are available, CI builds Windows x64, Linux x64/ARM64 and
-macOS Intel/Apple Silicon assets. The matching package Releases receive native
-libraries and a versioned `rpi-extension.json` manifest. A separate bundle Release
-contains all catalog extensions, the installer and the standalone ACP bridge;
-archived host-owned packages are intentionally omitted.
-The full workspace build does not mean every extension gets a new version.
+1. Run **Actions → Publish GitHub extensions** on `main` and choose `all` or
+   comma-separated package names.
+2. The workflow validates that every selected package is a catalog extension
+   whose `repository` metadata points at `pi-rust/rpi-extension`, then checks
+   **all** version tags before creating anything. Existing tags must point at the
+   exact source commit and are never moved.
+3. `release-packages.yml` builds Windows x64, Linux GNU x64/ARM64, Linux x64 musl
+   and macOS Intel/Apple Silicon targets, restricted to the platforms each crate
+   declares. Validated archives are uploaded before the
+   `rpi-extension.json` discovery manifest.
+4. Drafts become public only after every supported platform succeeds. A failed
+   build leaves drafts unpublished; retry the same source commit.
 
-The workflow can also be run manually on `main` to retry a release.
+Version tags are immutable, so changing a released package means bumping its
+Cargo version, running `python3 .github/scripts/sync-release-catalog.py`,
+committing the synchronized catalog and publishing again. Use the optional
+`source_ref` input to retry an existing version from its original commit.
 
 See the [release workflow and distribution protocol](docs/prebuilt-distribution.md)
-for publishing credentials, branch protection, retry behavior and host installation.
-The [JSON schema](docs/rpi-extension.schema.json) defines the discovery manifest.
+for the publishing rules and the host-side install protocol, the
+[GitHub release guide](docs/github-releases.md) for optional credentials and
+Android signing, and the [JSON schema](docs/rpi-extension.schema.json) for the
+discovery manifest.
 
-For a local release preflight, run `task publish-dry-run`. Manual crates.io
-publishing requires `cargo login` and an unpublished package version. Each
-extension is self-contained and can be published in any order.
-`task pack` also creates a directly installable platform bundle under `dist/`
-for a GitHub Release or another binary registry.
+Release tooling checks run on every change to `.github/scripts`,
+`catalog/packages.json` or the release workflows:
+
+```bash
+python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+python3 .github/scripts/github-release.py plan --repository pi-rust/rpi-extension
+```
+
+The `plan` command prints the selection and source commit without creating tags
+or releases. `task publish-dry-run` remains available for a local preflight.
+`task pack` also creates a directly installable platform bundle under `dist/`.
