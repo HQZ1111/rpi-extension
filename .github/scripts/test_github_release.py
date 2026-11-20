@@ -37,7 +37,9 @@ class GitHubReleaseTests(unittest.TestCase):
             run.assert_not_called()
 
     def test_new_release_is_draft_and_tag_is_exact_source(self):
-        with mock.patch.object(release, "api", return_value=None), mock.patch.object(release.subprocess, "run") as run:
+        with mock.patch.object(release, "api", return_value=None), \
+                mock.patch.object(release, "release", return_value=None), \
+                mock.patch.object(release.subprocess, "run") as run:
             release.prepare(self.repository, [self.tag], self.source)
             commands = [call.args[0] for call in run.call_args_list]
             self.assertIn(f"sha={self.source}", commands[0])
@@ -81,6 +83,24 @@ class GitHubReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "tags are missing"):
                 release.finalize(self.repository, [self.tag], self.source)
             run.assert_not_called()
+
+    def test_release_lookup_finds_drafts_and_distinguishes_network_failure(self):
+        for draft in [True, False]:
+            result = subprocess.CompletedProcess([], 0, '{"isDraft": ' + str(draft).lower() + ', "assets": []}', "")
+            with mock.patch.object(release.subprocess, "run", return_value=result) as run:
+                self.assertEqual(release.release(self.repository, self.tag)["draft"], draft)
+                self.assertIn("view", run.call_args.args[0])
+        with mock.patch.object(release.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "release not found\n")):
+            self.assertIsNone(release.release(self.repository, self.tag))
+        with mock.patch.object(release.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "timeout")):
+            with self.assertRaises(RuntimeError):
+                release.release(self.repository, self.tag)
+
+    def test_finalize_pipeline_propagates_python_failures(self):
+        workflow = Path(__file__).parents[1] / "workflows/release-github.yml"
+        self.assertIn("        shell: bash\n", workflow.read_text())
+        result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", "false | cat"], capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
 
     def test_network_errors_are_not_treated_as_missing_tags(self):
         for stderr, expected in [("gh: Not Found (HTTP 404)", None), ("timeout", RuntimeError)]:

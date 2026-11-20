@@ -61,7 +61,17 @@ def check_tags(repository, tags, source):
 
 
 def release(repository, tag):
-    return api(f"repos/{repository}/releases/tags/{quote(tag, safe='')}", missing_ok=True)
+    # The REST /releases/tags endpoint does not find drafts. gh release view
+    # resolves both drafts and published releases for the authenticated caller.
+    result = subprocess.run(["gh", "release", "view", tag, "--repo", repository,
+                             "--json", "isDraft,assets"], capture_output=True, text=True)
+    if result.returncode:
+        if result.stderr.strip() == "release not found":
+            return None
+        raise RuntimeError(result.stderr.strip())
+    item = json.loads(result.stdout)
+    item["draft"] = item.pop("isDraft")
+    return item
 
 
 def prepare(repository, tags, source):

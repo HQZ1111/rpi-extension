@@ -35,6 +35,11 @@ jobs:
         with:
           ref: ${{ inputs.source_ref || github.sha }}
           fetch-depth: 0
+      # Retry old source with current release tooling, without changing tags.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
@@ -46,7 +51,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGES: ${{ inputs.packages }}
-        run: python .github/scripts/github-release.py prepare --packages "$PACKAGES"
+        run: python .release-tools/.github/scripts/github-release.py prepare --packages "$PACKAGES"
 
   build:
     needs: prepare
@@ -70,6 +75,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Publish drafts only after all archives and discovery manifests are uploaded
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_REF: ${{ needs.prepare.outputs.source_ref }}
