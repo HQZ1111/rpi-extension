@@ -1,0 +1,58 @@
+[package]
+name = "rpi-acp"
+version = "0.2.18"
+edition.workspace = true
+rust-version = "1.85"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "ACP agent server for rpi"
+readme = "README.md"
+keywords = ["rpi", "acp", "agent-protocol", "zed", "stdio"]
+
+[package.metadata.rpi.prebuilt]
+supported-targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+# Standalone ACP bridge: same server as the extension, but it owns its own
+# stdin/stdout, so an ACP client can launch it without any `rpi` host changes.
+# Named `-bridge` (not `rpi-acp`) so its debug-info stem does not collide with
+# the `rpi_acp` cdylib in the same package.
+name = "rpi-acp-bridge"
+path = "src/main.rs"
+
+[dependencies]
+rpi-extcore = { path = "../rpi-extcore", version = "0.2.16" }
+rpi-plugin-sdk = { workspace = true, features = ["stdio"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "sync",
+    "time",
+    "process",
+    "io-util",
+    "io-std",
+    "macros",
+    "net",
+] }
+
+[dev-dependencies]
+rpi-extcore = { path = "../rpi-extcore", version = "0.2.16", features = ["test-support"] }
+
+[[example]]
+name = "configuration_fixture"
+path = "examples/configuration_fixture.rs"
+crate-type = ["cdylib"]
+test = false

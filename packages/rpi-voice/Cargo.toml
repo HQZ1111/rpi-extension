@@ -1,0 +1,60 @@
+[package]
+name = "rpi-voice"
+version = "0.3.15"
+edition.workspace = true
+rust-version = "1.88"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Voice conversation extension for rpi — offline STT + auto-TTS replies"
+readme = "README.md"
+keywords = ["rpi", "voice", "tts", "stt", "plugin"]
+categories = ["development-tools"]
+
+[features]
+# Embedded offline STT is enabled by default. The model is downloaded on first
+# use into ~/.rpi/agent/models/sense-voice (or RPI_STT_MODEL_DIR).
+default = ["local-stt"]
+local-stt = ["dep:sherpa-onnx"]
+# Musl builds use the hosted/API voice path and compile OpenSSL for the target
+# instead of trying to consume the host runner's glibc OpenSSL installation.
+musl-api = ["rpi-tts/musl-api"]
+
+[package.metadata.rpi.prebuilt]
+supported-targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rpi-plugin-sdk = "0.3.20"
+rpi-tts = { path = "../rpi-tts", version = "0.1.16" }
+serde_json = { workspace = true }
+reqwest = { workspace = true, features = ["multipart"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "macros"] }
+
+serde = { version = "1", features = ["derive"] }
+unicode-width = "0.2"
+
+# Embedded offline STT (optional): sherpa-onnx, statically linked, prebuilt
+# binaries auto-downloaded at build time.
+sherpa-onnx = { version = "=1.13.8", default-features = false, features = ["static"], optional = true }
+
+# Audio I/O
+cpal = "0.15"
+hound = "3.5"        # WAV encoding
+# Edge TTS returns MP3 — the `mp3` feature (symphonia, pure Rust) is required
+# or `Decoder::new` rejects the data with "Unrecognized format".
+rodio = { version = "0.19", default-features = false, features = ["wav", "mp3"] }
+# Used directly by the streaming player (player.rs). rodio's own `Decoder`
+# needs `Read + Seek`, which a socket stream is not; symphonia's packet API
+# decodes frame-by-frame from a feed, so the first MP3 chunk can play while the
+# rest of the utterance is still arriving. Same major version rodio uses, so the
+# two share one copy.
+symphonia = { version = "0.5", default-features = false, features = ["mp3"] }

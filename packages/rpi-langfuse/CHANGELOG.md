@@ -1,0 +1,60 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.4.8](https://github.com/pi-rust/rpi-package/compare/rpi-langfuse-v0.4.7...rpi-langfuse-v0.4.8) - 2026-11-06
+
+### Fixed
+
+- *(release)* publish musl builds for non-voice extensions ([#222](https://github.com/pi-rust/rpi-package/pull/222))
+
+## [0.4.7](https://github.com/pi-rust/rpi-package/compare/rpi-langfuse-v0.4.6...rpi-langfuse-v0.4.7) - 2026-11-06
+
+### Other
+
+- honor per-crate musl support matrix ([#215](https://github.com/pi-rust/rpi-package/pull/215))
+
+## [0.4.6](https://github.com/pi-rust/rpi-package/compare/rpi-langfuse-v0.4.5...rpi-langfuse-v0.4.6) - 2026-11-05
+
+### Fixed
+
+- make strict warning builds pass
+
+## [0.4.5](https://github.com/pi-rust/rpi-package/compare/rpi-langfuse-v0.4.4...rpi-langfuse-v0.4.5) - 2026-10-31
+
+### Fixed
+
+- *(tools)* clarify guidance and complete parameter schemas ([#135](https://github.com/pi-rust/rpi-package/pull/135))
+
+## [0.4.4](https://github.com/pi-rust/rpi-package/compare/rpi-langfuse-v0.4.3...rpi-langfuse-v0.4.4) - 2026-10-17
+
+### Added
+
+- *(ui-adapter)* add Open WebUI integration
+
+### Other
+
+- Merge main into feature-1014 and preserve release compatibility
+- Merge main into feature-1014 and preserve ACP integration checks
+- *(release)* use reusable release assets workflow
+
+## [0.4.3](https://github.com/pi-rust/rpi-package/compare/rpi-langfuse-v0.4.2...rpi-langfuse-v0.4.3) - 2026-10-14
+
+### Other
+
+- update Cargo.toml dependencies
+
+## [0.4.2](https://github.com/pi-rust/rpi-package/compare/rpi-langfuse-v0.4.1...rpi-langfuse-v0.4.2) - 2026-10-14
+
+### Added
+
+- *(webui)* integrate Open WebUI and publish versioned extensions ([#4](https://github.com/pi-rust/rpi-package/pull/4))
+
+### Other
+
+- *(langfuse)* isolate offline handlers from local credentials ([#5](https://github.com/pi-rust/rpi-package/pull/5))

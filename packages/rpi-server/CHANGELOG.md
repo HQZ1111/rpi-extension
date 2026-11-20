@@ -1,0 +1,54 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.3.11](https://github.com/pi-rust/rpi-package/compare/rpi-server-v0.3.10...rpi-server-v0.3.11) - 2026-11-06
+
+### Fixed
+
+- *(release)* publish musl builds for non-voice extensions ([#222](https://github.com/pi-rust/rpi-package/pull/222))
+
+## [0.3.10](https://github.com/pi-rust/rpi-package/compare/rpi-server-v0.3.9...rpi-server-v0.3.10) - 2026-11-06
+
+### Other
+
+- honor per-crate musl support matrix ([#215](https://github.com/pi-rust/rpi-package/pull/215))
+
+## [0.3.9](https://github.com/pi-rust/rpi-package/compare/rpi-server-v0.3.8...rpi-server-v0.3.9) - 2026-11-05
+
+### Fixed
+
+- make strict warning builds pass
+
+## [0.3.8](https://github.com/pi-rust/rpi-package/compare/rpi-server-v0.3.7...rpi-server-v0.3.8) - 2026-10-31
+
+### Fixed
+
+- *(tools)* clarify guidance and complete parameter schemas ([#135](https://github.com/pi-rust/rpi-package/pull/135))
+
+## [0.3.7](https://github.com/pi-rust/rpi-package/compare/rpi-server-v0.3.6...rpi-server-v0.3.7) - 2026-10-30
+
+### Fixed
+
+- *(rpc)* adapt server and shared projections to compact native deltas
+
+### Added
+
+- Explicit `rpcMessageUpdates` launch configuration (`snapshot` or `compact-deltas`), including strict validation and tool schema. Omission uses the native executable's own default without injecting a flag unknown to older hosts. Upgrade consumers before deploying a native CLI that defaults to compact deltas; snapshot is only a temporary migration fallback.
+
+## [0.3.6](https://github.com/pi-rust/rpi-package/compare/rpi-server-v0.3.5...rpi-server-v0.3.6) - 2026-10-14
+
+### Other
+
+- update Cargo.toml dependencies
+
+## [0.3.5](https://github.com/pi-rust/rpi-package/compare/rpi-server-v0.3.4...rpi-server-v0.3.5) - 2026-10-14
+
+### Added
+
+- *(webui)* integrate Open WebUI and publish versioned extensions ([#4](https://github.com/pi-rust/rpi-package/pull/4))

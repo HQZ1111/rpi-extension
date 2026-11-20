@@ -1,0 +1,39 @@
+[package]
+name = "rpi-office"
+version = "0.1.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Drive Excel, Word and PowerPoint from rpi through the pi-for-office task-pane add-in (loopback WebSocket bridge + Office tool proxy)"
+readme = "README.md"
+# crates.io accepts at most 5 keywords; keep the host apps, drop the generic one.
+keywords = ["rpi", "office", "excel", "word", "powerpoint"]
+categories = ["development-tools"]
+
+[package.metadata.rpi.prebuilt]
+supported-targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Pinned to the SDK whose vtable matches the host (abi 4, struct_size 192):
+# 0.26.0 ships `Abort`, `register_plugin_lifecycle`, `register_tool_prompt`,
+# `GetEditorText` and the autocomplete / command-completion slots, plus the safe
+# `OwnedString` + `execute_handler!` wrappers that keep `unsafe` out of this
+# crate. Older 0.3.x releases stop at `SideQuestion = 25`.
+rpi-plugin-sdk = "=0.26.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "sync", "time", "io-util", "macros"] }
+tokio-tungstenite = "0.29"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

@@ -1,0 +1,33 @@
+[package]
+name = "rpi-mcp-adapter"
+version = "0.2.11"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Session-scoped stdio and Streamable HTTP MCP adapter for the rpi Rust agent"
+readme = "README.md"
+keywords = ["rpi", "mcp", "json-rpc", "plugin"]
+categories = ["development-tools"]
+
+[package.metadata.rpi.prebuilt]
+supported-targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rpi-plugin-sdk = { version = "0.3.16" }
+rpi-mcp-core = { version = "0.1.1", path = "../rpi-mcp-core" }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+rpi-plugin-sdk = { version = "0.3.16", features = ["process"] }

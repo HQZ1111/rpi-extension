@@ -1,0 +1,707 @@
+# rpi-web
+
+**Android client:** [`android/`](android/) is the Kotlin/system-WebView app alongside `frontend/`, with independent Gradle tests, fixed-signature release APK builds and an Android-only Actions workflow. It connects to an existing HTTPS node; it is not a native chat UI or a bundled backend. See its README for downloads/builds, signing migration and emulator verification limits.
+
+rpi-web is a browser workspace for the native `rpi` coding agent. It provides a project and session sidebar, streaming conversations, tool interactions, Markdown rendering, file previews, and Git diffs. Tool cards show elapsed execution time while commands run and keep the final duration after completion, reload, and service restart. The interface supports English and Simplified Chinese, with light and dark themes. **Settings → Appearance → System / 设置 → 外观 → 随系统** follows OS day/night changes immediately without reloading chat or clearing drafts; new users default to System. Existing explicit light/dark preferences remain unchanged. The sidebar logo also shows the running build as a small `vX.Y.Z` pill. It prefers the `version` reported by `GET /api/v1/capabilities` — the service that is actually running — and falls back to the version baked into the bundle at build time, so a stale dev server or an older host still renders something truthful. Language, appearance, tool names and the manual chat refresh live in **Settings**; the sidebar footer has a single Settings entry, and the setup no longer shows a fake account identity or a refresh icon.
+
+The sidebar keeps one entry point per action: **New session**, **Search chats / 搜索会话** (Ctrl / Cmd + K, matching session titles, project names and tags across projects) and **Recent chats / 最近会话**, an inline list capped at **ten** rows that the heading collapses and restores with one click (kept inline because a floating copy duplicated the tree row for row). Archived sessions are a filter on the same project tree. Hidden row actions (`+`, `…`) keep `pointer-events: none` while invisible and reveal on hover or `:focus-visible`, so a click can no longer pin or trigger a control that is not visible.
+
+The right-hand rail is one exclusive panel: **Execution trace**, **Project files**, or **Runtime and context**. Runtime and context holds runtime settings plus the read-only diagnostics (resources, queue, history, provider auth and statistics) that used to be a separate inspector; it is reachable from the **details** jump in the composer and from the runtime entry at the top of the model menu. The composer keeps cache hit and context always visible and drops the always-on Shift+Enter tutorial. **Message search / 搜索消息** remains available with Ctrl / Cmd + F. The right-side project files/changes panel starts collapsed at every screen width, including after a page reload; use the toolbar's **Toggle project files / 切换项目文件面板** button to open or close it when needed.
+
+Session lists on desktop and mobile show **Interrupted / 异常中断** for reported errors or failed runs, and **Needs resume / 待恢复** when the latest settlement explicitly reports a pending resume. Running/starting/input-waiting sessions suppress older failure markers; normal stops and declined operations are not labeled as abnormal. Successful completion clears the marker when the refreshed summary clears the error. This uses existing session-list metadata only, with no per-session history scan or extra RPC requests. It does **not** detect every offline crash: if a host restart leaves only an offline registry entry without error/settlement evidence, the UI does not invent a persisted interruption status.
+
+When a run explicitly fails, is interrupted, or settles after a manual stop, the empty composer shows an **icon-only Continue / 继续 button (▷)** instead of the send arrow, keeping the same compact circular size. The localized name is available through its hover tooltip and accessible label, not visible button text. Clicking it (or pressing Enter in the empty composer) uses native `resume_pending` when the branch reports pending resumable work and the host advertises it; otherwise an explicit failed/error/interrupted/aborted/stopped settlement (or a native `aborted: true` marker) permits a normal prompt saying **Continue the previous unfinished task. / 继续上一个未完成的任务。** This fallback is a new instruction, not a replay of the original question or a claim of native checkpoint recovery. Nothing retries automatically. A draft or attachment restores normal Send, and a running session still shows Stop. Success, declined operations and ordinary HTTP/read errors do not invent resumable work. A manual stop offers Continue only after native settlement, never merely because the abort request was acknowledged. Dismissing the interrupted-run notice hides only the notice; Continue remains available. Initialization, failed connections and closed hosts cannot admit a continuation, and rejected requests leave the action retryable without inserting the fallback instruction into the draft.
+
+The conversation has a tiny **left-side timeline rail** with up to **ten visible question ticks** on desktop and phones (fewer when screen height is constrained). Longer rails scroll; there is no expand button or wide message list. Hover/focus for a lightweight preview, click/tap to navigate, or hold and drag to scrub loaded questions. Keyboard arrows/Home/End browse and Enter/Space navigates. Text and images belonging to one native message share one node. Active reading markers and reading anchors survive pagination.
+
+With a matching native host, core and HTTP adapter, the rail fetches **10 user-only summaries per page**, separate from transcript bodies. An upward edge gesture or **↑** requests the next exclusive `beforeId` page, pinned to the returned native `leafId`. It does not walk mixed 48-message pages to find ten questions. Loaded questions navigate locally; clicking an unloaded question shows a **read-only historical window inline in the main transcript**, initially **48 messages**, with explicit **Earlier page / Later page** controls. Each page replaces the previous bounded window; it is not appended to the live message array and never opens a dialog or traps keyboard focus. Inline loading, errors and Retry remain next to the transcript. Use **Back to latest / 回到最新消息** to leave history and return to the live tail, including while a history read is pending—not Escape or a modal Close button. Historical cards reuse existing presentation; they never run tools, answer questions or modify the session. Live chat/SSE continues updating independently in memory while its rows are hidden; snapshot and summary refreshes do not replace the selected historical page or restart its reads. A newer timeline selection, return to latest or session navigation cancels obsolete context requests and ignores late responses. Foreign cursors and branch conflicts remain explicit errors rather than silent latest-page substitutions.
+
+The native commands `get_message_summaries` and `get_message_window` must both be explicitly advertised by the snapshot. Core validates bounded typed queries/results; HTTP maps them to `GET /api/v1/sessions/{id}/message-summaries` and `/message-window`, using existing authentication and Host/Origin checks. Old hosts/backends retain the previous bounded fallback: up to ten sequential 48-message pages to fill ten real questions, then manual continuation. Failures and nonadvancing cursors stop automatic reads. A transient failure of a supported new query shows Retry; it does not silently start a heavy fallback scan. No Web history database or persistent index is added. This source change does **not** upgrade or restart a running backend; until all matching layers are installed, the compatibility path remains active.
+
+Generic successful-completion notes such as **Run completed / 运行状态：已完成** are omitted from chat. Failed/stopped results, meaningful error details, explicit summaries and authoritative elapsed-time footers remain available; native events/history and completion handling are unchanged.
+
+Todo cards keep the native result's **whole-list progress**, even when `list` hides completed tasks: `6/7 completed` with one listed pending task remains **6/7**, not 0/1. Expanded details explain when a nonempty partial list is shown and preserve in-progress task markers. Summary-only results such as `4/4 completed` show **task details were not returned**, not a misleading “0/4 listed” message or an empty checklist. A genuine `No todos` / 0/0 result instead shows **No tasks**. Earlier task lists remain explicitly historical in the earlier-updates disclosure; they are never backfilled as current task details. The icon's **Todo operation completed / 待办操作已完成** status describes the tool call, not whether all tasks are finished. Old checklist-only results remain supported; task state, call timings and native history are unchanged.
+
+**Consecutive todo updates share one card showing the latest call**, rather than repeating a card for every change (for example, 9/9 → 9/10 → 9/11 displays only 9/11). Expand that card and its **Earlier updates / 先前 N 次更新** disclosure to inspect the original progress, lists and call timings. Grouping uses only already-loaded rows and makes no history requests. User/assistant prose, thinking, notes, images, other tools, errors, unknown finished output and native run-duration footers separate groups; an earlier active call is never hidden behind a later call. Live updates and prepending older pages preserve the current card's expansion and reading position. This is presentation only: no task/history changes, no merging of task contents and no summed or estimated timings.
+
+Ask tool history (`ask_user`, `ask`, including `functions.` prefixes) renders **read-only question and answer cards** instead of raw JSON: questions, context, option descriptions, exact native selected titles, multi-select values, comments and free-text answers. Multiple questions are matched by stable answer IDs, or unambiguous question text when no ID is present; unmatched answers are never assigned by position. Confirmation accepts/declines remain distinct from cancellation and tool errors. Native result summaries and failures stay readable; unsupported payloads remain available under a collapsed **Raw data / 原始数据** disclosure. Cards preserve tool-name preferences, expansion and authoritative call timings on live updates and reloads. This presentation does not submit answers, reopen dialogs or change native history; the existing live answering overlay is unchanged.
+
+Live question and permission dialogs open and close immediately while a run-boundary transcript refresh is pending. A late snapshot or replay cannot reopen an answered/cancelled question or clear a draft in the next question; transcript rows still use ordered snapshot/replay reconciliation.
+
+Delegated task history (`delegate_task`, including `functions.` prefixes) renders **read-only task/report cards** instead of transport JSON. Expand to read the full task, role, native child status, turns used and Markdown report, or live text progress/errors while running. A native `turnLimited` flag is an explicit warning, not an inferred failure. Requested/returned execution budgets and child/session IDs are in a closed **Execution details / 执行信息** disclosure; raw input/output is separately opt-in. The header's elapsed time remains the actual tool-call timing, never the timeout budget. Cards preserve tool-name preferences and manual expansion through live completion, restore structured results on reload, and never start, rerun, cancel or navigate to a child. Unknown payloads remain available as raw data; invalid tasks and image-bearing outputs retain the generic renderer. Native child lifecycle and history are unchanged.
+
+Tool headers show exact **native tool names by default**, including prefixes and case. In **Settings → Tool names**, choose **Native names / 原生名称** or **Mapped names / 映射名称** (the previous localized actions such as Read/Ran/Edited). The selection is saved in this browser and applies to all tool cards, including live updates, plans and todos. Switching changes only the header label: paths, commands, metadata, elapsed times, details and expansion state are preserved; native calls and transcript data are unchanged.
+
+Long shell commands inside tool details default to a four-line visual preview. Use **Show full command / 展开完整命令** to reveal the complete command and collapse it again when finished. Short commands need no extra click; copying always retains the full original command, including quotes and newlines.
+
+Completed conversation runs also show a compact **Worked for … / 已用时 …** divider, including failed and stopped runs. This is the native run's persisted finish timestamp minus its start timestamp, including model calls, tools and waiting—not a sum of tool timings or a browser stopwatch. Live completion and historical/reloaded messages use the same metadata. Requires the matching `rpi-httpcore`/`rpi-extcore` backend update; an older backend quietly omits the divider. Incomplete or imported histories without authoritative run records do not display estimated times. Timing lookups run separately from the bounded transcript snapshot and resume in bounded chunks; they never block opening the conversation or change its SSE sequence boundary. Installing/restarting the backend is a separate operator step.
+
+Runtime: `browser → rpi --webserver (extension) or rpi-web (standalone) → rpi --mode rpc → model and project tools`. Each open session runs a separate native host process. Project files, model credentials, and session records live on the computer or server running the service.
+
+### New-session model preference
+
+A successful **explicit** model choice in the composer, Runtime settings,
+`/model provider/model-id`, or Provider Manager is remembered in this browser
+(origin + project), and applied with the existing `set_model` command before
+opening a newly created session. Reloading/resuming existing sessions never
+changes their model; without a preference, native configuration remains the
+default. Only provider/model IDs are stored—no credentials or node configuration
+changes. Storage is optional, with a tab-local memory fallback when unavailable.
+
+**Runtime settings → Clear model preference (future native defaults)** /
+**运行时设置 → 清除模型偏好（未来使用原生默认值）** affects future new sessions only,
+not the current model. An unsuccessful explicit choice is not remembered. If
+applying a remembered model fails (for example, a temporarily unavailable
+provider), the new session remains reachable with an actionable notice; the
+preference is retained. Choose an available model in Runtime settings before
+sending, or clear the preference for future sessions. No retry or prompt is
+sent automatically.
+
+### File-reference guidance for model replies
+
+When the native host **loads the `rpi-web` extension**, its `BeforeAgentStart`
+hook appends a short file-reference guide to the current system prompt on each
+run. It preserves the entire original prompt and other extensions' additions;
+a marker prevents duplicate sections. Missing/malformed prompt envelopes are
+left unchanged. The initial native process directory is included as JSON-quoted
+path data, not inferred from the browser or a shell's temporary `cd`.
+
+The guide asks the model to use verified project-root-relative paths for the
+main checkout, absolute paths for other Git worktrees, and standard Markdown
+links (including `[README.md](README.md)` for root-level files). It discourages
+bare filenames, package-cwd-relative abbreviations, invented preview URLs and
+claims that outside/sensitive files can be opened. This is advisory formatting,
+not permission to read files or a guarantee that model output is correct;
+existing server path validation and bounded fallback search remain authoritative.
+
+The hook does not start a Web listener and also runs in TUI/ACP/RPC hosts that
+explicitly or automatically load this extension. Conversely, a standalone Web
+server does **not** force-load it into native children. With exact resource
+selection, include `rpi-web` in the selected extensions if this guidance is
+wanted; unselected extensions and `--no-extensions` remain respected. No native
+startup prompt flags, resource selections, user messages, transcripts or project
+instruction files are rewritten. Installing/loading the updated extension is a
+separate step; frontend HMR alone cannot update this Rust hook in live hosts.
+
+A real-native, loopback-only regression checks prompt preservation, repeated
+runs, exact selection with/without the extension, and unchanged user text:
+
+```bash
+cargo build --locked -p rpi-web
+python3 packages/rpi-web/scripts/verify-file-links.py \
+  --rpi /absolute/path/to/rpi \
+  --extension /absolute/path/to/built/librpi_web_extension.dylib
+```
+
+Use the platform's built library suffix (`.dll` on Windows). The script creates
+an isolated profile, temporary transcripts and deterministic local model; it
+neither installs the extension nor restarts a running service.
+
+### Idle session timeout
+
+Web automatically releases an **idle native host** after 30 minutes without a
+request for that session. This closes the child process but preserves the
+session registry entry and native transcript; opening the chat again restores
+it. A running operation, queued work, or uncertain native idle state is never
+interrupted. A session left waiting on an unanswered dialog (`awaiting_input`)
+is also not killed mid-run: after the same idle budget without any request the
+reaper cancels the pending dialog through the ordinary response path, which lets
+the tool call settle; the host is then closed on a later pass once it is idle.
+Set `"sessionTimeoutSeconds": 0` in `.rpi/web.json`
+to disable the reaper, or choose another positive number of seconds. The
+command-line override is `--session-timeout SECONDS` (use `0` to disable).
+This is a resource cleanup timeout, not permanent session deletion.
+
+## Code Mode child inspection
+
+Native-identified tool rows offer **Inspect child calls / 查看子调用**. Opening it
+requests a separate bounded, read-only child snapshot/feed and groups children
+only by the exact native parent call ID and tool name. Synthetic row IDs are not
+native identity. One visible session scope owns the feed and aborts it on
+navigation; ordinary transcript messages, timings and SSE stay unchanged.
+
+The window holds at most eight children / eight phases each. Earlier child and
+phase pages are explicit, pinned replacements, not an automatic history scan.
+Outcomes come from core observations; unknown, final-only and historical fork
+copies remain distinct from established completion or destination execution.
+Bodies are never fetched automatically. **Read body page** requests at most two
+chunks / 64 KiB; each subsequent page replaces the prior byte fragment. This is
+not whole-body decoding/integrity verification or an image/result reconstruction.
+Live/replayed phases do not borrow an older page's leaf: their first explicit
+body read independently pins the current native branch; body continuations keep
+that returned leaf without rebasing historical cursors.
+
+A dedicated SSE snapshot wins its own handoff. Resync/disconnection retires the
+old feed before fresh bounded recovery; transcript `Last-Event-ID` is never used
+for child replay. Retries are bounded, auth failures stop, and unsupported/error
+states never become a successful empty child list or erase ordinary tool output.
+Refresh/reload does not execute or replay a tool.
+
+This frontend requires matching core/HTTP/native layers. Local and public-dev
+browser fixtures exercise rendering, pagination, reconnect/reload, cancellation,
+errors and new-leaf body reads; public CSS HMR was observed and restored. Those
+fixtures mock the API: they do **not** qualify real-native ongoing Web overlap or
+upgrade the shared Rust backend. No backend installation/restart/deployment is
+performed. See [qualification](../../docs/codemode-full-parity-matrix.md#current-child-adapter-and-web-increment).
+
+## Message links and branding
+
+Project-contained Markdown file links and explicit inline-code paths such as `src/main.ts:2` open an authenticated, read-only code preview on click. Inline code links only when it names a real directory and file, so a bare filename (`message-links.spec.ts`) or a git ref (`origin/main`) stays plain code instead of being joined onto the project root and failing to open; an openable inline path is underlined while code that cannot be opened keeps the neutral chip, so the affordance matches what a click does. A path the project does not contain literally is resolved once, for every previewable kind (source, Markdown, PDF, sheets): the dialog first looks for the exact `dir/file` suffix, then for the file name alone, and reports the corrected location. Linked worktrees are searched too (`/projects/{id}/files?root=…`), so a file that only exists in a `git worktree` checkout opens from that checkout and the dialog names it; one match opens silently, several become a bounded list labelled by checkout (project root first), and none keeps the explicit error. A link that guessed the wrong directory therefore never dead-ends. Anything that still cannot be previewed offers **Download / 下载到本地**: `GET /api/v1/projects/{id}/download` streams any regular project file as `application/octet-stream` with `Content-Disposition: attachment` and `nosniff` (same browsable boundary and 40 MiB cap), so the browser saves it instead of rendering it. When the host has neither route, the dialog says so and offers a local copy instead, so PDFs and sheets stay previewable without a backend upgrade. Relative paths and project-contained absolute Windows/Unix paths support `:12` and `#L12-L20` line references. The preview highlights source and target lines, shows the absolute local path and keeps copy, view, fullscreen and close in one compact icon strip instead of a row of labelled buttons. Markdown files (`*.md`, `.markdown`, `.mdx`) open in a rendered reading view with the existing chat Markdown renderer; the icon strip toggles **View source / 查看源码** back to the numbered source, and a `:12` or `#L12-L20` deep link starts in source so the target lines stay visible. **Fullscreen / 全屏查看** expands the dialog to the viewport. Retry and Escape/Close restore focus, and stale reads are aborted on close or project/session navigation. **Copy path** copies the absolute path shown in the dialog, joined from the server's `Project.path` with that root's own separator (Windows vs Unix is determined by the server, not the browser); line suffixes remain display-only. If the root is a shape the client cannot join unambiguously (for example a stripped verbatim UNC prefix), the dialog falls back to the project-relative path and disables **Copy path**. **Copy relative path** keeps the project-relative form used in agent messages. PDF and Office files reuse the same click-to-open affordance. A PDF streams through `/api/v1/projects/{id}/document` into the browser's own viewer; `.xlsx` workbooks are parsed in the page with SheetJS, loaded on demand as its own chunk so opening a chat never pays for it. Every sheet gets a tab (first eight), numbers and dates keep their number formats, and each sheet renders as a read-only table with row numbers and a sticky header column; 200 rows × 40 columns, cells capped at 200 characters, with an explicit truncation note. Bytes still come from the bounded document route, or from a local file the user picks when the host has no such route. Word, PowerPoint, legacy `.xls`/`.doc`/`.ppt` binaries cannot be rendered in the browser, so the dialog names the file and offers a download for a desktop app. That route is extension-whitelisted, limited to 40 MiB, checks the file signature against the extension, and fails with `415` for anything else; an older backend without the route falls back to the text read and its explicit message. It reuses the bounded project file API and the same sensitive-file and symlink boundaries; no file is read before a click. Fenced code is not linkified. HTTP(S) links open a separate browser tab with `noopener noreferrer`; unsafe schemes, traversal, UNC paths and files outside the project stay inert.
+
+Workspace/login branding and browser icons use a locally bundled light variant of the rpi three-column mark. The question timeline uses a 15px step on desktop and phones, retaining ten visible question nodes, keyboard navigation and existing rail widths.
+
+## Lightweight execution trace
+
+Use the toolbar's **Execution trace / 执行轨迹** icon to open the default-closed read-only workbench. Its Langfuse-style layout puts a compact **call tree and common-scale timeline** beside independent **Overview / Input / Output** details. Select a row to inspect loaded user excerpts, LLM output/model/provider/token/cache/cost metadata, tool arguments/results, native retries and execution outcomes. Tool children are linked only by exact observed assistant tool-call IDs; uncorrelated or evicted parents are never guessed. Fold groups or LLM children with their chevrons; **Compact trace / 收窄轨迹** restores the narrower conversation-side layout. Phones use a full-width panel with the tree above separately scrollable details. This is a local projection of snapshots, history pages and ordered events already received—not an external Langfuse connection, complete model prompt or provider API request log. Opening it makes no trace requests or automatic history scans and never runs, retries or changes a task.
+
+Timeline rows share a duration scale, **not a fabricated execution schedule or completion percentage**. Bars use a plain rounded track and solid fill. Positioned bars require validated native start/finish boundaries and a compatible known run origin. Duration-only bars compare recorded durations and explicitly label **Start unknown / 起点未知**; they do not imply simultaneous starts, order or parallelism. Each bounded execution uses its own origin, not a shared absolute session clock. Unknown time is not a zero-width measurement; message timestamps, replay order and browser clocks are never used to invent LLM/tool request boundaries. Run totals are inclusive and are not LLM API latency.
+
+Longest recorded LLM/tool steps are highlighted directly in the tree. The default-closed **Duration ranking / 耗时排行** auxiliary disclosure contains the five longest **recorded** steps; clicking a bar unfolds ancestors, selects and focuses the row, and scrolls only the trace outline. Coverage counts show unknown timings rather than treating them as zero. Ranking widths are relative to the longest recorded step, **not percentages of total execution time**: run/settlement totals and retry backoff are excluded, and parallel steps are never summed. Running values are the latest native timing observations, not a live browser stopwatch or final durations. Missing LLM request timings remain unknown and cannot compete for the longest-recorded badge. All-zero records remain visible without claiming a bottleneck.
+
+Observed native execution boundaries group live steps. Historical messages without reliable boundaries remain explicitly **partial loaded history**, not guessed runs. Recorded run elapsed time includes tools and waiting; tool elapsed time uses native timing metadata. Neither is presented as LLM latency. Missing model, usage, cost or timing is shown as unknown, without runtime-model backfills, estimated token totals, stopwatch durations or TTFT. The latest snapshot settlement remains visible separately when it cannot be linked to the loaded steps. Detailed live grouping/retries are only available while observed or retained in the existing bounded event replay; reload cannot recover unrecorded events.
+
+The trace retains at most **300 nodes / 50 groups**, with text excerpts limited to **2,000 characters**, and reports clipping. It updates in memory only for the current session/navigation; switching sessions, reconnecting/resyncing or navigating history clears that projection before reseeding it from available data. It does not persist/export raw messages, images, structured thinking blocks or full context. Details are inert plain text with bounded traversal and best-effort masking of common credential fields and token patterns. This masking is **not a security boundary**: ordinary message/tool excerpts can still contain sensitive project content. No telemetry, database or external service is added. The panel is mutually exclusive with files/runtime, supports English/Chinese and phones, and returns focus to its toolbar button when closed with Close or Escape inside the panel.
+
+## Mermaid diagrams
+
+Fenced `mermaid` blocks render flowcharts (`flowchart` or `graph`), sequence diagrams and state machines (`stateDiagram-v2` or the legacy `stateDiagram` alias) locally:
+
+````markdown
+```mermaid
+flowchart TD
+  A[开始] --> B{验证成功?}
+  B -->|是| C[完成]
+  B -->|否| A
+```
+````
+
+Use **View source / 查看源码** to inspect or copy the exact source, and click the diagram (or press Enter) for the existing fit/original-size image viewer. Diagrams follow light/dark themes and fit narrow screens. The bundled Mermaid library loads only when needed; no CDN is used. This is frontend-only and needs no new backend route. Mermaid 12 targets modern browsers (Safari 17.4+); frontend builds require Node 22.12+.
+
+Unfinished streamed syntax automatically recovers when valid text arrives. Invalid/unsupported diagrams preserve source instead of breaking chat. Rendering is limited to 20,000 source characters, 300 newline/semicolon-separated segments, 150 edges and 16,384px per generated dimension. Only flowcharts and sequences are enabled initially. Source-owned initialization/frontmatter, shape metadata (`@{...}`), HTML other than `<br>`, image resources and custom CSS (`style`, `classDef`, `linkStyle`) are deliberately rejected before rendering. Generated SVGs are displayed in browser image mode, not injected as application HTML; graph links/callbacks are not interactive. Unsupported features remain readable/copyable as source.
+
+## Installation
+
+This guide uses the **rpi 0.7.0** native host. Web shares one implementation between a native extension and a standalone executable.
+
+### Native extension
+
+The latest release supports native extension installation (Web 0.1.1 and earlier are standalone only):
+
+```bash
+rpi install rpi-web --github pi-rust/rpi-package
+rpi --webserver=init  # Create project .rpi/web.json once.
+rpi --webserver      # Start from that project directory.
+```
+
+The host also supports `rpi install rpi-web` with repository discovery from crates.io metadata. To try the current implementation from a local checkout before publication:
+
+```bash
+rpi install rpi-web --path packages/rpi-web
+rpi --webserver=init
+rpi --webserver
+```
+
+Run the installation command from the `rpi-package` repository root, then start Web from the project you want to use. The extension includes the complete frontend in its library; it needs no standalone Web executable, Node.js, or separate assets directory. Unless `rpiBin` is explicitly configured, sessions use the same `rpi` executable that loaded the extension. RPC children do not start another Web server. Starting with Web 0.1.7, `--webserver` is the preferred entry point; `--web` remains a compatibility alias, including `=init`, `=help`, and `=CONFIG`. Both names use the same `.rpi/web.json`. Use one name per invocation; different values supplied to both names are rejected.
+
+Both entry points read the same `.rpi/web.json`. Use `rpi --webserver=/absolute/path/to/web.json` to select an explicit file, and `rpi --webserver=help` for help. Keep the host process running; Ctrl+C stops Web, closes streams and session children, and releases the listener. Saved transcripts remain available after restart. Choose one service entry point per process: `--webserver` cannot be combined with `--acp`, `--webui`, or `--server`.
+
+The host also forwards its own `--port` and `--bind` options to Web, so a one-off override needs no file edit:
+
+```bash
+rpi --webserver --port 3031
+rpi --webserver --port 3031 --bind 0.0.0.0
+```
+
+These values are applied after every configuration file, exactly like `rpi-web --port 3031 / --bind 0.0.0.0` for the standalone executable.
+
+After the listener binds successfully, the terminal shows a server status page:
+
+```text
+  rpi Web Server v...
+  ================================================
+
+  Status      Running
+  Listen IP   127.0.0.1
+  Port        3030
+  Open        http://127.0.0.1:3030
+  Project     /path/to/project
+  Password    Not configured
+  Host rules  127.0.0.1:3030, localhost:3030
+
+  Open the URL in your browser to use the workspace.
+  Keep this terminal open. Press Ctrl+C to stop.
+```
+
+`--webserver` runs the server in the terminal; open the displayed URL to chat in the browser. The page shows the actual bound port, including an OS-assigned port when `port` is `0`. IPv6 URLs use brackets. A wildcard listener (`0.0.0.0` or `::`) displays a loopback browser URL. Configure `allowedHosts` and the login password before connecting remotely. A port conflict exits with an error without displaying a Running page.
+
+### Standalone executable
+
+The standalone program remains available for direct execution and container deployments:
+
+1. Download and extract `rpi` for your platform from the [host v0.7.0 release](https://github.com/bigfish1913/pi-rust/releases/tag/v0.7.0).
+2. Download and extract `rpi-web` from the [Web releases](https://github.com/pi-rust/rpi-package/releases?q=rpi-web-v). Builds are available for Windows x64, Linux GNU x64 / ARM64, Linux musl x64, and macOS Intel / Apple Silicon.
+3. The archive includes a complete `assets/` directory for external frontend overrides. Place the host executable alongside the Web executable, or select it with an absolute `--rpi-bin` path. The release's `rpi-web-release.json` contains checksums.
+
+The musl extension requires a musl `rpi` host; GNU and musl libraries are not interchangeable. The musl standalone program and extension use the dynamic musl runtime (and `libgcc_s`), rather than a fully static executable. On Alpine, install `libgcc`. Release CI builds both entrypoints with a native musl Rust compiler, tests the packages, loads the extension with a musl `dlopen` fixture, and checks the standalone HTTP listener before publishing. The CDN mirror includes both standalone archives and installable extension archives with their manifests.
+
+For example, a Windows installation can use this layout:
+
+```text
+C:/Tools/rpi-web/
+├── rpi-web.exe
+├── rpi.exe
+└── assets/
+    ├── index.html
+    ├── favicon.svg
+    └── assets/
+```
+
+On Linux / macOS, the executables are named `rpi-web` and `rpi`, without the `.exe` suffix. Prebuilt archives do not require Rust or Node.js. Git must be on the service process's PATH to use Git features.
+
+You can also install both executables with Cargo:
+
+```bash
+cargo install rpi-cli --version 0.7.0 --locked
+cargo install rpi-web --locked
+rpi --version
+rpi-web --version
+```
+
+The source version embeds the complete frontend in both entry points. Explicit `--assets` / JSON `assets` still selects an external frontend. Older standalone releases, including 0.1.1, require the archive's complete `assets/` directory.
+
+## Recommended: save startup settings in .rpi
+
+Configuration files are supported starting with Web **0.1.1**. Version `0.1.0` supports only the command-line startup described below.
+
+Run this once from your project directory:
+
+```bash
+rpi-web --init
+```
+
+For an extension installation, use `rpi --webserver=init` instead. Either command creates `.rpi/web.json` without overwriting an existing file. The default contents are:
+
+```json
+{
+  "project": "..",
+  "rpiBin": "rpi",
+  "port": 3030
+}
+```
+
+With the host available, subsequent starts from that project directory need only:
+
+```bash
+rpi --webserver  # Extension installation.
+# Or: rpi-web, when using the standalone executable.
+```
+
+Edit the configuration when you need different paths or settings. For example, on Windows:
+
+```json
+{
+  "project": "..",
+  "projects": ["D:/Projects/another-project"],
+  "projectsRoot": "D:/Projects/web-projects",
+  "rpiBin": "C:/Tools/rpi-web/rpi.exe",
+  "assets": "C:/Tools/rpi-web/assets",
+  "bind": "127.0.0.1",
+  "port": 3030
+}
+```
+
+Every field is optional. JSON paths are resolved relative to **the configuration file's directory**, so `"project": ".."` in a project's `.rpi/web.json` selects the project root. A bare `rpiBin` program name is found on PATH; a value containing a directory is resolved as a path. On Windows, use forward slashes such as `D:/Projects/...` to avoid JSON backslash escaping.
+
+Settings are applied in this order: built-in defaults → `~/.rpi/agent/web.json` (or `$RPI_CODING_AGENT_DIR/web.json`) → the startup project's `.rpi/web.json` → command-line options. A legacy `~/.rpi/web.json` is still read first, so an existing installation keeps working while the agent-dir file takes precedence. The startup project defaults to the current directory. With `--project PATH`, the project configuration is discovered in that directory; parent directories are not searched. Global settings suit a service managing several projects, while project settings suit starting from a project directory.
+
+Later fields replace earlier values. A project's `projects` array replaces the global list; CLI `--add-project` options append to the resulting list. For a temporary port change, use `rpi-web --port 3031` (standalone) or `rpi --webserver --port 3031` (extension). If you configured `allowedHosts`, update its port entries as needed.
+
+To load only a specific configuration file, followed by CLI overrides:
+
+```bash
+rpi-web --config /path/to/.rpi/web.json
+# Create a configuration at a specific location.
+rpi-web --config /path/to/.rpi/web.json --init
+```
+
+Additional fields include `sessionDir`, `registry`, and `allowedHosts`. Omitting them preserves the existing defaults and session-storage locations. Configuration uses strict JSON: unknown fields or invalid contents produce a startup error.
+
+Supply the Web access password and model API keys through environment variables or the native host's credential configuration, rather than Web JSON. The `RPI_WEB_ALLOWED_HOSTS` environment variable overrides JSON `allowedHosts`.
+
+## Command-line startup (also supports 0.1.0)
+
+Choose an existing project directory and configure model credentials for the service process. The examples below use an Anthropic environment variable. You can instead set `OPENAI_API_KEY` and select a corresponding model in the Web interface. If the CLI is already configured, Web's native host uses the same service user's settings.
+
+**Windows / PowerShell**, using the installation layout above:
+
+```powershell
+$env:ANTHROPIC_API_KEY = 'your-api-key'
+C:/Tools/rpi-web/rpi-web.exe --project D:/Projects/my-project --rpi-bin C:/Tools/rpi-web/rpi.exe --assets C:/Tools/rpi-web/assets --port 3030
+```
+
+**Linux / macOS**, from the extracted Web directory:
+
+```bash
+export ANTHROPIC_API_KEY='your-api-key'
+./rpi-web --project /path/to/my-project --rpi-bin /path/to/rpi --assets "$PWD/assets" --port 3030
+```
+
+Open [http://127.0.0.1:3030/](http://127.0.0.1:3030/). Keep the service process running; press Ctrl+C to stop it. By default, Web listens only on loopback and opens the workspace directly when no access password is configured.
+
+Model API keys and the Web login password serve different purposes: API keys authorize model requests, while `RPI_WEB_PASSWORD` protects workspace access. See the [host configuration guide](https://github.com/bigfish1913/pi-rust/blob/main/crates/rpi-cli/README.md) for credentials, custom models, and gateways. Custom models are typically configured in `~/.rpi/agent/models.json`.
+
+## First conversation
+
+1. Select a project in the sidebar and click its **New session** action.
+2. Click the model name in the toolbar or open **Runtime settings** to choose the model, thinking level, and tools. Use **Provider auth** to configure an API key; OAuth controls appear only when the host supports them.
+3. Enter a request and press Enter to send, or Shift+Enter for a newline. Replies, thinking, and tool results stream into the conversation. Interactive tools display the corresponding dialogs.
+4. Use the stop button to cancel a running task. Ordinary messages sent during a run enter the follow-up queue, and the queue panel shows them with edit, cancel and **Send now / 立即发送** actions. Sending now re-delivers that text as a steering message so the current run sees it at its next tool boundary; when nothing is running it starts a run instead. There is no queue-type selector: queued messages are follow-ups, and sending now is the one action that steers. Enter sends on desktop and touch keyboards alike (during a run it queues a follow-up); Shift+Enter inserts a newline, and confirming an IME composition does not send. Touch keyboards are given a Send action hint, with native before-input handling for keyboards that omit Enter keydown. A running task also exposes a second, quieter send button beside Stop that queues the draft (it appears only while a run is active and the composer has content). A delivered message leaves the list as soon as its user message arrives, and while a run is active a bounded 1.5-second queue read keeps the remaining rows honest (steering is delivered at tool boundaries, which emits no user message of its own).
+5. Open the file panel to inspect project files and Git changes. These panels provide read-only previews; the agent can modify project files through its tools when requested.
+6. Open settings to choose English / Simplified Chinese and light / dark appearance. Language selection is also available on the login screen.
+
+### Create or add projects
+
+Click **Add project** in the sidebar:
+
+- **Create project**: enter a name and optionally initialize Git. The service creates a directory inside `--projects-root`.
+- **Open folder**: enter an existing subdirectory inside that root. Relative paths are resolved against `--projects-root`; absolute paths inside the root are also accepted.
+
+When using a remote service, these are **server directories**. To register an existing project outside the managed root, use repeatable `--add-project` options at startup:
+
+```bash
+rpi-web --project /work/project-a --add-project /work/project-b --add-project /work/project-c --projects-root /work/new-projects --rpi-bin /path/to/rpi --assets /path/to/web/assets
+```
+
+Sessions are grouped by project. New sessions use the selected project as the tools' working directory; forks and clones retain their source project. Session menus support rename, tags, pin, archive, and restore. Archiving retains history and does not cancel a running task. Sidebar search filters project names, session titles, tags, and ids; tag and status selectors provide narrower views.
+
+### Message-linked image previews
+
+Click a project file link in a message to open a read-only preview. Raster image
+paths (`png`, `jpg`/`jpeg`, `gif`, `webp`, `bmp`, case-insensitive) use the existing
+project-scoped image endpoint instead of the text-file route. The backend still
+enforces project boundaries, image signatures and its 20 MiB limit; SVG and other
+unsupported binaries are not rendered as images. Images offer **Copy path** and
+**Copy relative path**, not **Copy code**. Click the image to zoom; Escape closes
+zoom first, then the file preview, restoring focus. Read/decode errors offer **Retry**; closing or navigating
+away cancels pending reads and releases temporary blob URLs. Text previews and
+line highlighting remain unchanged. This frontend behavior does not deploy or
+upgrade a running backend.
+
+Mock-backed browser coverage lives in `frontend/e2e/message-links.spec.ts` and
+intercepts all API requests (no model calls). Set `RPI_MESSAGE_LINKS_BASE_URL` to
+exercise the same tests against the public dev frontend; omit it for local Vite.
+
+### Commands and keyboard shortcuts
+
+| Action | Command or shortcut |
+| --- | --- |
+| Show command help | `/help` |
+| Choose model / thinking level / tools | `/model`, `/thinking`, `/tools` |
+| Create a session / stop a run | `/new`, `/abort` |
+| Compact context | `/compact` or `/compact important details to preserve` |
+| Resume an interrupted run | `/continue` or the interrupted-run banner action |
+| Create a session | Ctrl / Cmd + N |
+| Search chats (sessions) | Ctrl / Cmd + K |
+| Search messages in the open chat | Ctrl / Cmd + F |
+| Toggle the sidebar | Ctrl / Cmd + B |
+| Open settings | Ctrl / Cmd + , |
+
+Available actions depend on host capabilities. This version does not yet provide full Codex feature parity.
+
+## Startup options
+
+Run `rpi-web --help` to list options.
+
+| Option | Default and purpose |
+| --- | --- |
+| `--init` | Create project `.rpi/web.json`, or the `--config` destination; never overwrite an existing file |
+| `--config PATH` | Load only this JSON configuration, skipping global / project discovery |
+| `--project PATH` | Current working directory; must exist; selects the default project and project configuration location |
+| `--add-project PATH` | None; repeat to add other existing projects |
+| `--projects-root PATH` | `projects/` beside the registry; managed root for browser-created or added projects |
+| `--rpi-bin PATH` | `rpi` on PATH; an absolute executable path is recommended |
+| `--assets PATH` | Discover assets beside the executable or in the source tree; an absolute path to the complete frontend directory is recommended for deployment |
+| `--bind IP` | `127.0.0.1`; use `0.0.0.0` for LAN or container access; `rpi --webserver --bind IP` works too |
+| `--port N` | `3030`; CLI (`rpi --webserver --port N` or `rpi-web --port N`) overrides every configuration file |
+| `--registry PATH` | `~/.rpi-web/sessions.json`; session index, titles, and organization metadata |
+| `--session-dir PATH` | Native host's default session store; override to select an explicit transcript directory |
+| `--version` / `-V` | Print the Web version |
+
+## LAN and server access
+
+The following examples use server address `192.168.1.10` and port `3030`; replace them with your own address. Configure the bind address, allowed Host values, and access password.
+
+**Linux / macOS:**
+
+```bash
+export RPI_WEB_PASSWORD='replace-with-a-long-password'
+export RPI_WEB_ALLOWED_HOSTS='192.168.1.10:3030,127.0.0.1:3030,localhost:3030'
+rpi-web --project /work/my-project --rpi-bin /path/to/rpi --assets /path/to/web/assets --bind 0.0.0.0 --port 3030
+```
+
+**Windows / PowerShell:**
+
+```powershell
+$env:RPI_WEB_PASSWORD = 'replace-with-a-long-password'
+$env:RPI_WEB_ALLOWED_HOSTS = '192.168.1.10:3030,127.0.0.1:3030,localhost:3030'
+C:/Tools/rpi-web/rpi-web.exe --project D:/Projects/my-project --rpi-bin C:/Tools/rpi-web/rpi.exe --assets C:/Tools/rpi-web/assets --bind 0.0.0.0 --port 3030
+```
+
+From another device, open `http://192.168.1.10:3030/` and sign in with the configured password. `RPI_WEB_ALLOWED_HOSTS` is a comma-separated list of Host values: use the hostname or IP and the actual port, without a URL scheme, path, or trailing slash. Defaults allow only `127.0.0.1:port` and `localhost:port`.
+
+For an HTTPS reverse proxy, add the public domain, such as `rpi-web.example.com`, to the allowlist. Preserve the browser's Host header, set `X-Forwarded-Proto: https`, and disable SSE response buffering. A proxy on another machine or container must be able to reach Web's listening address. Use HTTPS and an access password for public deployment. Authentication currently uses one shared access password; visitors share the service's projects and sessions.
+
+Environment variables are read at startup; restart the service after changing them. The program does not automatically load `.env` files, so inject variables through your shell or process manager. Native-host environment variables, including model API keys, must reach the same service process.
+
+## Persistence and upgrades
+
+- The registry stores session IDs, titles, pinning, and archive state. Its sibling `projects.json` stores projects added through the browser.
+- Source files stay in each project's directory. Native transcripts are stored by the host, or in the directory selected by `--session-dir`. The registry is not a substitute for transcript files.
+- Model configuration, credentials, and extensions belong to the service user. Persist the corresponding directories when deploying in containers.
+- After restart, saved sessions may appear offline; select a session to reopen it. Browser refreshes restore conversations from the host.
+- Before upgrading, let active tasks finish, back up these data locations, and stop Web. Replace the executable and complete matching `assets/` directory, retain the same projects, registry, session directories, and service user, then restart and check `--version`.
+
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| Cannot start `rpi` | Check `rpi --version` and set an absolute `--rpi-bin` path |
+| `rpi --webserver` opens terminal chat instead of the server | Install the Web extension with `rpi install rpi-web --github pi-rust/rpi-package`, then restart rpi. Check that Web 0.1.7 or newer is installed for `--webserver`; older extensions use `--web`. |
+| Blank page or JS / CSS 404 | Check that `--assets` contains `index.html` and the nested `assets/` directory; update the complete frontend bundle and refresh |
+| LAN access rejected | Check the bind address, port connectivity, and the Host / port entries in `RPI_WEB_ALLOWED_HOSTS` |
+| Login succeeds but model calls fail | Configure model authorization separately from the Web password; check the service user's credentials and selected model |
+| Model list or settings are stale | Update configuration for the service user on the server; reopen sessions after host startup-setting changes and restart Web after environment changes |
+| History missing after restart | Check that the registry, native session directory, project paths, and service user are unchanged |
+| Cannot add an existing folder | Browser-added directories must be inside `--projects-root`; use `--add-project` for other existing directories |
+
+## Development and API reference
+
+The following sections cover protocol details, persistence, and frontend development. For regular use, follow the installation and startup steps above.
+
+### Run from source
+
+From the `rpi-package` repository root, with a native host already installed or built:
+
+```bash
+cargo run --locked -p rpi-web -- --project /path/to/project --rpi-bin /path/to/rpi --assets packages/rpi-web/assets --port 3030
+```
+
+The frontend bundle in `assets/` is generated, not committed. Build it once with the
+frontend commands below before `cargo build` / `cargo run` if you want the embedded
+workspace; without it the server still compiles and serves a "frontend not built" page,
+and `--assets` can point at an existing bundle.
+
+### Shared backend
+
+The source implementation now composes the `rpi-httpcore` API adapter with the frontend routes in this package. Shared native RPC, runs, session/workspace services, history, events and timing belong to `rpi-extcore`; ACP uses the same native driver and run/message semantics. The existing Web executable and extension still include everything needed to run the browser workspace.
+
+For an API-only service, see [rpi-httpcore](../rpi-httpcore/README.md). The dependency boundaries and compatibility contract are documented in [the architecture guide](../../docs/architecture/extension-core.md).
+
+### How the frontend is built and served
+
+The frontend is a React application built with Vite. At release time, `npm ci` and `npm run build` run in `frontend/`; Vite writes `index.html`, JavaScript, CSS, and the favicon into `../assets/`. Cargo then runs `build.rs`, which inventories that directory and generates `include_bytes!` entries for every file. Both the native extension library and the standalone executable contain this bundle.
+
+At runtime, `rpi --webserver` loads the extension and starts the shared Axum HTTP server. Opening its URL loads the embedded HTML and assets into the browser, which runs React and connects to the same server's API and SSE routes. Each active session uses a native `rpi --mode rpc` child. There is no separate frontend process, Node.js runtime, or Vite server in a release installation. An explicit `--assets` setting can select external frontend files instead.
+
+For frontend development, `npm run dev` starts Vite with hot reload; its `/api` proxy points to the separately running Rust backend. This development server is not part of the installed extension.
+
+### API and capability discovery
+
+The server binds to loopback by default and exposes:
+
+- `GET /api/v1/health`
+- `GET /api/v1/capabilities`
+- `GET/POST/DELETE /api/v1/auth` for the optional password-protected browser
+  session; when `RPI_WEB_PASSWORD` is set, all other API and SSE routes require
+  the HttpOnly session cookie
+- OAuth login is exposed as the capability-gated `oauth` RPC command: send
+  `begin`, display the returned authorization URL/instructions, then send
+  `exchange` with `{ "input": { "value": "..." } }`; credential material is
+  saved natively and never returned to the browser
+- `POST /api/v1/sessions` / `GET /api/v1/sessions` (list; optional `q`, `projectId`, `tag`, `status`, `archived`, and `pinned` filters)
+- `GET /api/v1/sessions/:id` / `DELETE /api/v1/sessions/:id`
+- `POST /api/v1/sessions/:id/open` (reopen a remembered session)
+- `POST /api/v1/sessions/:id/commands`
+- `POST /api/v1/sessions/:id/fork` with optional `{ "entryId": "...", "title": "..." }`
+- `POST /api/v1/sessions/:id/clone` with optional `{ "title": "..." }`
+- `POST /api/v1/sessions/:id/rename` with `{ "title": "..." }`
+- `POST /api/v1/sessions/:id/metadata` with optional `pinned`, `archived`, and `tags` fields
+- `GET /api/v1/sessions/:id/snapshot` (native transcript + caught-up events)
+- `GET /api/v1/sessions/:id/events` (SSE, `?after=<seq>` replay)
+
+Open `http://127.0.0.1:3030/` for the workspace UI.
+
+The bridge can be protected for public deployment with `RPI_WEB_PASSWORD`.
+Set `RPI_WEB_ALLOWED_HOSTS` to a comma-separated list of accepted Host headers;
+when the password is unset, local development remains unauthenticated.
+
+This bridge now exposes operations/history, queue, and stats surfaces, plus
+provider authentication controls, fork/clone, and append-only branch navigation.
+It deliberately leaves history deletion/editing and full parity unfinished.
+`capabilities.parityComplete` stays `false`, and the UI only renders what
+`GET /api/v1/capabilities` advertises:
+
+- create a session (one native `rpi --mode rpc` child per session)
+- send a prompt and watch `agent_start` → `message_*` → `agent_end` →
+  `agent_settled`
+- abort the active run
+- follow tool execution events
+- read a transcript projected into ordered rows: user/assistant text, collapsible
+  thinking, tool calls with their input and result inline, and injected notices
+- continue a run that recovery left interrupted (`/continue`, or the banner
+  action), which spends the tokens that run never did
+- compact the conversation (`/compact [instructions]`) and see the compaction
+  boundary in the transcript, before and after a reload
+- run browser-side slash commands (`/model`, `/thinking`, `/tools`, `/continue`,
+  `/abort`, `/new`, `/help`) that call the same RPC commands as the Runtime panel
+- watch context usage against the compaction threshold, from the same projection
+  the next provider call will send
+- pick a model, thinking level, and active tool set via `get_state`,
+  `get_available_*` and `set_*`
+- switch between live sessions in the sidebar, close them, and restore a
+  transcript after a page reload
+- inspect durable operation history in an independently scrollable timeline;
+  expand records and open-operation payloads with credential fields redacted;
+  use sequence pagination, inspect branch/leaf ids and token/cost stats, and keep
+  settlement outcomes visible after reload
+- view operation counts by type plus the active provider/model in the Stats panel
+- queue follow-ups (the default for anything typed during a run), steer a waiting
+  message into the current run with **Send now**, or start a run from it when
+  idle; inspect pending or completed queue entries with lifecycle status, then
+  cancel individual entries or clear the pending queue
+- fork or clone a session with a custom name; the sidebar persists parent/child
+  relation metadata as a compact branch tree, and sessions can be renamed
+- configure provider API keys without returning or logging secret material; run
+  the capability-gated OAuth begin/exchange flow through the extension provider,
+  with credentials saved natively; refresh existing OAuth credentials through
+  the native auth extension
+
+### Persistence and reopen
+
+Native hosts are spawned with `--session-id <uuid>`, so transcripts live in the
+project's session store and survive a bridge restart. A tiny registry
+(`~/.rpi-web/sessions.json` by default) remembers the ids and titles; `GET
+/api/v1/sessions` reports remembered-but-not-running sessions as `offline`, and
+`POST /api/v1/sessions/:id/open` brings them back (including a session whose
+child exited). `--registry PATH` moves the registry file, `--session-dir PATH`
+overrides the native session store.
+
+### Snapshot, replay, and reload
+
+The browser prioritizes the latest **40 messages** with history diagnostics excluded. When the snapshot supplies lifecycle status, it renders the transcript, restores pending questions and connects SSE **before** fetching runtime metadata. A slow `get_state` therefore does not hold the conversation behind the loading skeleton. Older snapshots without status still use runtime state as a fallback before replay and live subscription; their message rows can already be read, but sending waits for initialization. Local `/help` and `/tools` remain available while loading.
+
+Runtime metadata and slash-command catalogs load afterward, followed by delayed, serial diagnostics rather than a burst competing with the first snapshot. Switching sessions aborts obsolete browser reads and prevents the remaining diagnostic jobs from being dispatched; it does not cancel native work that has already been sent. Late metadata cannot override snapshot/live lifecycle status or newer runtime fields. Re-selecting the active session preserves its content, expansion, draft and reading position without restarting loading. An auxiliary metadata failure keeps the restored transcript and live stream available with an error message; current authentication failures still return to sign-in.
+
+History comes from the native host, not from browser state. `GET /snapshot`
+issues a read-only `get_messages` command, then returns the transcript together
+with any events published while the snapshot was being taken:
+
+```json
+{ "messages": [...], "lastSeq": 11, "events": [{ "seq": 12, "event": {...} }] }
+```
+
+The client renders `messages`, applies `events` in order, and then opens SSE with
+`?after=<lastSeq>`. There is no gap and no overlap, and nothing is lost if events
+land mid-snapshot. `leafId`, `pendingResume`, and the paging cursor fields ride
+along so the UI can point at the branch tip, flag an interrupted run, and load
+older transcript pages when the native host returned a truncated tail.
+
+The native `get_messages` response keeps the newest `limit` entries by default
+and returns `firstId`, `lastId`, and `hasMore`. Sending `beforeId: firstId` asks
+for the previous page. Each projected message carries its session `entryId`, so
+rows remain stable across reloads and pages. Scrolling within 160px of the top
+loads earlier messages automatically in 48-entry pages, without fetching all
+history on initial load. A keyboard-accessible button remains for short chats
+and retries. Only one page request is active; errors do not retry in a loop,
+and obsolete navigation responses cannot prepend into a different branch.
+The visible row stays anchored when a page is prepended or an older image
+finishes loading. `total` remains the full branch projection count, while
+`truncated` is retained as a compatibility alias for `hasMore`.
+
+Tool calls use compact activity summaries: an action and file path, command or
+query, followed by change counts and timings when available. They start
+collapsed; click the summary or use Enter/Space to show code, output, images,
+diffs or structured plans/tasks. Failures open automatically but can be
+collapsed. Live result/timing updates preserve the reader's choice, including
+when a result changes a generic call into a structured checklist. Expanding
+stops bottom-follow so long output does not move the reader away from its header.
+
+User upload lists display file cards with readable names and types rather than
+storage UUIDs. Expand a card to inspect or copy its original workspace path.
+This is a display-only projection of the bilingual attachment-list text; native
+prompts and history remain unchanged, and no document preview/download API is
+implied. The composer shows known sizes and image previews; historical cards do
+not invent sizes. Code examples, ordinary paths and malformed lists stay as text.
+
+Paste clipboard images or files into the composer with Ctrl/Cmd+V to upload them
+through the same project-scoped endpoint as the attachment button. Browsers must
+expose actual clipboard files; copied path strings and HTML image URLs are not
+read as local files or fetched. Plain-text paste and selection replacement stay
+native. Multiple/rapid pastes queue in order; sending waits until uploads finish.
+Switching session/project cancels pending batches and clears previews. A failed
+file leaves the draft and already uploaded attachments intact. Files pasted after
+a message is sent are retained when that message's acknowledgement arrives.
+
+Sessions also keep the last 512 projected events in memory with a monotonic
+`seq`; SSE frames carry `id: <seq>`. That buffer is what makes `?after=` work, and
+it is the fallback path for a host that does not advertise `get_messages`.
+Reconnects honor `Last-Event-ID`. If the replay window was evicted, the host
+sequence restarted, or a consumer fell behind, `resync_required` tells the browser
+to reload the native snapshot before subscribing again. SSE sends keepalives.
+
+The browser does not edit or delete historical records. Navigation only changes
+which existing branch entry is the active leaf; the durable operation records and
+settlements remain available for inspection.
+
+## Smoke test
+
+```bash
+# Uses a separate bridge child, registry, and session directory.
+RPI_BIN=/path/to/rpi RPI_WEB_BIN=/path/to/rpi-web \
+  packages/rpi-web/scripts/smoke-dev-web.sh
+
+# Optional provider-backed prompt. HTTP 429/quota is reported as SKIP (exit 0).
+SMOKE_PROMPT=1 packages/rpi-web/scripts/smoke-dev-web.sh
+```
+
+The smoke script never targets or kills the current agent session; cleanup only
+terminates the bridge process it started.
+
+## Frontend
+
+The React/Vite sources live in `frontend/`; the built bundle in `assets/` is what
+the Rust server serves. `GET /` re-reads `assets/index.html` on every request, so
+a frontend rebuild does not require recompiling the server.
+
+```bash
+cd packages/rpi-web/frontend
+npm ci
+npm run build        # typecheck + bundle into ../assets
+npm run dev          # Vite on :3181, proxying /api to :3030
+npm run e2e:production # builds and runs browser regression against the actual production bundle
+```
+
+`assets/` is generated output and is ignored by git; it is produced by `npm run build`
+and never edited by hand. Both entry points embed it during compilation, and the
+standalone server can also serve an external directory. Rebuild it after changing
+`frontend/src`, then rebuild the Rust library or executable to update the embedded
+frontend. Release pipelines rebuild the bundle themselves, so a fresh checkout only
+needs this step for local builds.
+
+## Integration checks
+
+These scripts start isolated Web and native-host processes with temporary data directories. Configuration, project, authentication, and event checks do not call a model. Chat verification uses a local provider fixture and consumes no real provider quota. On Windows, supply absolute `.exe` paths.
+
+```bash
+python packages/rpi-web/scripts/verify-extension.py --rpi /path/to/rpi --plugin /path/to/rpi_web_extension.dll --browser
+# On Linux / macOS use librpi_web_extension.so / .dylib.
+python packages/rpi-web/scripts/verify-config.py --web /path/to/rpi-web --rpi /path/to/rpi
+python packages/rpi-web/scripts/verify-projects.py --web /path/to/rpi-web --rpi /path/to/rpi --project /path/to/project
+python packages/rpi-web/scripts/verify-auth.py --web /path/to/rpi-web --rpi /path/to/rpi
+# Linux / WSL: synthetic RPC fault checks.
+python3 packages/rpi-web/scripts/verify-events.py --web /path/to/rpi-web
+# --browser requires frontend npm dependencies and Playwright Chromium.
+python packages/rpi-web/scripts/verify-chat.py --web /path/to/rpi-web --rpi /path/to/rpi --browser
+```
+
+Execution timings are stored beside the configured session registry in a directory with the same basename and a `.tool-timings` suffix (for example, `registry.tool-timings/`). Commands completed before this feature was installed have no recorded duration.

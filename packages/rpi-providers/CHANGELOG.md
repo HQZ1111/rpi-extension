@@ -1,0 +1,108 @@
+# Changelog
+
+## [Unreleased]
+
+## [0.1.10](https://github.com/pi-rust/rpi-package/compare/rpi-providers-v0.1.9...rpi-providers-v0.1.10) - 2026-11-13
+
+### Fixed
+
+- *(providers)* locate cdylib from nested Cargo test paths ([#277](https://github.com/pi-rust/rpi-package/pull/277))
+
+## [0.1.9](https://github.com/pi-rust/rpi-package/compare/rpi-providers-v0.1.8...rpi-providers-v0.1.9) - 2026-11-06
+
+### Fixed
+
+- *(release)* publish musl builds for non-voice extensions ([#222](https://github.com/pi-rust/rpi-package/pull/222))
+
+## [0.1.8](https://github.com/pi-rust/rpi-package/compare/rpi-providers-v0.1.7...rpi-providers-v0.1.8) - 2026-11-06
+
+### Other
+
+- honor per-crate musl support matrix ([#215](https://github.com/pi-rust/rpi-package/pull/215))
+
+## [0.1.7](https://github.com/pi-rust/rpi-package/compare/rpi-providers-v0.1.6...rpi-providers-v0.1.7) - 2026-10-29
+
+### Fixed
+
+- *(antigravity)* normalize union tool schema types
+
+## [0.1.6](https://github.com/pi-rust/rpi-package/compare/rpi-providers-v0.1.5...rpi-providers-v0.1.6) - 2026-10-28
+
+### Fixed
+
+- *(providers)* keep the Antigravity project binding across restarts
+
+### Other
+
+- *(providers)* make strict clippy pass for the provider package
+
+### Fixed
+
+- Keep the Antigravity project binding after a restart. Login and refresh store the project with the access token, so a stream after a restart uses it without project discovery. Credentials stored before this change keep the discovery fallback until `rpi auth refresh`.
+
+## [0.1.5](https://github.com/pi-rust/rpi-package/compare/rpi-providers-v0.1.4...rpi-providers-v0.1.5) - 2026-10-27
+
+### Added
+
+- *(providers)* add the Google Antigravity provider ([#83](https://github.com/pi-rust/rpi-package/pull/83))
+
+### Added
+
+- Add the Google Antigravity provider as a module: six catalog models, Gemini SSE streaming with cancellation, managed project discovery and PKCE OAuth login (`rpi auth login --provider antigravity`). The login URL carries a random state, and a pasted callback must return it; the PKCE verifier never leaves the process. The OAuth client comes from `RPI_ANTIGRAVITY_OAUTH_CLIENT_ID` and `RPI_ANTIGRAVITY_OAUTH_CLIENT_SECRET` at build or run time; release workflows warn when they are unset and never fail. Ported from cortexkit/antigravity-auth (MIT).
+
+## [0.1.4](https://github.com/pi-rust/rpi-package/compare/rpi-providers-v0.1.3...rpi-providers-v0.1.4) - 2026-10-23
+
+### Fixed
+
+- *(providers)* reuse lifecycle resources and ship pending transport fixes
+- *(providers)* preserve case insensitive request header precedence
+- *(providers)* adopt stream watchdog and preserve compat overrides
+
+### Other
+
+- *(providers)* cover BOM and CR-only streaming through the DLL
+- *(providers)* verify named and empty SSE keepalives
+- *(providers)* cover non-reasoning models and reload diagnostics
+- *(providers)* pin final reviewed SDK revision
+
+### Fixed
+
+- Ship the pending stream idle timeout, keepalive/BOM/CR framing, DeepSeek compat/reasoning replay and case-insensitive header fixes together.
+- Pin the released 0.8.3 SDK and propagate client construction errors as terminal provider errors.
+
+### Changed
+
+- Reuse lifecycle-scoped runtimes and bounded HTTP connection pools for all four providers, while keeping credentials and request headers separate.
+- Cancel active work and reject new calls on reload; older hosts without lifecycle support retain the request-scoped fallback.
+
+## [0.1.3](https://github.com/pi-rust/rpi-package/compare/rpi-providers-v0.1.2...rpi-providers-v0.1.3) - 2026-10-22
+
+### Fixed
+
+- *(providers)* reserve thinking budget for DeepSeek reasoning models
+
+### Other
+
+- *(providers)* pin the released 0.8.0 SDK
+
+### Fixed
+
+- DeepSeek 的 reasoning 模型把思考 token 算进 `max_tokens`，8192 的答案额度会被长思考全部吃掉，
+  流以 `finish_reason: length` 结束而正文为空或被截断。模型现在声明
+  `reasoningCountsTowardMaxTokens`，由 provider 协议在答案额度之上按当前思考级别预留预算；
+  答案额度同时从 8192 提到 16384。该修复需要 rpi-ai / rpi-plugin-sdk 0.8.0。
+
+### Changed
+
+- 将 `rpi-ai`、`rpi-plugin-sdk` 与 `rpi-extensions` 升级到 0.8.0。
+
+## [0.1.2] - 2026-10-21
+
+### Added
+
+- Publish the unified DeepSeek, OpenRouter, llama.cpp and Proxy extension to crates.io, alongside the five-platform GitHub prebuilt archives.
+
+### Changed
+
+- Use the published SDK 0.6.3 with its optional `provider` feature and matching core dependencies instead of a pinned Git checkout.
+- Keep the existing GitHub-only v0.1.1 release and its archives unchanged.
