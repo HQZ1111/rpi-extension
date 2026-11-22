@@ -125,7 +125,8 @@ continuation worker — nothing here reworks the state machine.
   still `active` plus a `waiting` field, with or without a deadline) is
   released: the verdict is exactly the external input the goal waited for, so
   the wait clears, the active clock restarts, and the next action dispatches.
-- If the model itself had archived the goal (`goal_complete` / `goal_blocked`),
+- If the model itself had archived the goal (`goal_complete`, the legacy
+  `goal` tool's `complete` action, or `goal_blocked`),
   it is reopened with a fresh id — stale terminal tools and stale verdicts for
   the old id fail. A goal the user stopped (`/goal stop` and its aliases) is
   **never** reopened: the verdict is recorded as history and the notice says
@@ -138,9 +139,12 @@ continuation worker — nothing here reworks the state machine.
   version it actually served — a verdict arriving while an older verdict run is
   in flight survives and is dispatched next.
 - If the goal is stopped (`paused`/`usage_limited`/`budget_limited`), the
-  verdict and next action are recorded and wait for `/goal resume`.
-- `pass` records only. It clears any queued next action and never starts or
-  wakes a run; on an archived goal it leaves the goal archived.
+  verdict and next action are recorded and wait for `/goal resume`. Explicit
+  pause cancels any previous wait; a rejection cannot undo the pause.
+- `pass` records only. It supersedes and clears any queued next action (even
+  while paused) and never starts or wakes a run; on an archived goal it leaves
+  the goal archived. Hosts must not submit obsolete pass results expecting
+  them to leave a newer queued rejection untouched.
 - Nothing in the plugin produces verdicts. Without an embedding host calling
   `_verify-result`, behavior is exactly the plain 0.3 loop.
 

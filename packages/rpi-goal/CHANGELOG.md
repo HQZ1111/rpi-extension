@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Record legacy `goal {action: "complete"}` as a model completion, so verifier
+  rejections can reopen it while explicit `/goal stop` remains final.
+- Clear stale waiting metadata on explicit pause; regression coverage also pins
+  that pass verdicts supersede queued rejection actions without starting a run.
+
 ### Added
 
 - `/goal _verify-result` host bridge: embedding hosts record completion-verification

@@ -267,6 +267,108 @@ fn verdict_rows_are_bounded_in_persisted_state() {
     support::release_sends();
 }
 
+#[test]
+fn legacy_goal_tool_completion_can_be_rejected_and_reopened() {
+    let _guard = support::serial();
+    start_goal("Legacy tool completion review");
+    support::settle_pause();
+    let id = support::active_goal().unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    support::tool("goal", json!({"action": "complete"})).unwrap();
+    assert!(support::active_goal().is_none());
+    let state = support::goal_state().unwrap();
+    let archived = state["archived"].as_array().unwrap().last().unwrap();
+    assert_eq!(archived["terminatedBy"], json!("modelCompleted"));
+
+    support::command(&format!(
+        r#"_verify-result {{"goalId":"{id}","outcome":"notSatisfied","nextAction":"Recheck the legacy completion claim"}}"#
+    ));
+    let sends = support::wait_sends_mentioning("Recheck the legacy completion claim", 1, TIMEOUT);
+    assert_eq!(sends.len(), 1);
+    let goal = support::active_goal().unwrap();
+    assert_eq!(goal["status"], json!("active"));
+    assert_ne!(goal["id"], json!(id));
+    assert!(goal["terminatedBy"].is_null());
+}
+
+#[test]
+fn rejection_after_pausing_a_wait_keeps_the_goal_stopped() {
+    let _guard = support::serial();
+    start_goal("Paused wait review");
+    support::settle_pause();
+    let id = support::active_goal().unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    support::tool(
+        "goal_wait",
+        json!({"goal_id": id, "reason": "await review"}),
+    )
+    .unwrap();
+    support::command("pause");
+    let paused = support::active_goal().unwrap();
+    assert!(
+        paused["waiting"].is_null(),
+        "explicit pause cancels the wait"
+    );
+    let before = support::calls_named("SendMessage").len();
+    support::command(&format!(
+        r#"_verify-result {{"goalId":"{id}","outcome":"notSatisfied","nextAction":"Review after explicit resume"}}"#
+    ));
+    support::settle_pause();
+    let goal = support::active_goal().unwrap();
+    assert_eq!(goal["status"], json!("paused"));
+    assert!(goal["waiting"].is_null());
+    assert!(goal["activeSince"].is_null());
+    assert_eq!(
+        goal["pendingNextAction"],
+        json!("Review after explicit resume")
+    );
+    assert_eq!(support::calls_named("SendMessage").len(), before);
+
+    support::command("resume");
+    assert_eq!(
+        support::wait_sends_mentioning("Review after explicit resume", 1, TIMEOUT).len(),
+        1
+    );
+}
+
+#[test]
+fn pass_supersedes_a_queued_rejection_without_waking_a_paused_goal() {
+    let _guard = support::serial();
+    start_goal("Superseded rejection review");
+    support::settle_pause();
+    support::command("pause");
+    let id = support::active_goal().unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    support::command(&format!(
+        r#"_verify-result {{"goalId":"{id}","outcome":"notSatisfied","nextAction":"OBSOLETE_REVIEW_ACTION"}}"#
+    ));
+    support::settle_pause();
+    let queued = support::active_goal().unwrap();
+    assert_eq!(queued["pendingNextAction"], json!("OBSOLETE_REVIEW_ACTION"));
+    let before = support::calls_named("SendMessage").len();
+    support::command(&format!(
+        r#"_verify-result {{"goalId":"{id}","outcome":"pass"}}"#
+    ));
+    support::settle_pause();
+    let goal = support::active_goal().unwrap();
+    assert_eq!(goal["status"], json!("paused"));
+    assert!(goal["pendingNextAction"].is_null());
+    assert!(
+        goal["pendingNextActionSeq"].as_u64().unwrap()
+            > queued["pendingNextActionSeq"].as_u64().unwrap()
+    );
+    assert_eq!(support::calls_named("SendMessage").len(), before);
+    support::command("resume");
+    support::settle_pause();
+    assert!(support::sends_mentioning("OBSOLETE_REVIEW_ACTION").is_empty());
+}
+
 /// Reviewer reproduction 1: a pass on a *still active* goal must record only.
 /// The old `finish()` on every outcome woke the worker, which sent a paid
 /// generic continuation (SendMessage count 1 -> 2) without any new settle.

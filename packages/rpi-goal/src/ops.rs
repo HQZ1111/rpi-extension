@@ -181,6 +181,7 @@ fn apply_status(goal: &mut Goal, new_status: Status, now: i64) {
         }
         _ => {
             goal.status = new_status;
+            goal.waiting = None;
             goal.stop_clock(now);
         }
     }
@@ -220,9 +221,18 @@ pub fn set_status(new_status: Status) -> Result<Goal, String> {
     result
 }
 
-/// Archive the active goal. Used by `/goal stop|done|complete` and by the
-/// legacy `goal` tool action; the model path is `goal_complete`.
+/// Archive an explicit user stop from `/goal stop|done|complete`.
 pub fn complete() -> Result<Goal, String> {
+    complete_from(TerminationSource::UserStop)
+}
+
+/// The legacy model-callable `goal {action: "complete"}` still represents a
+/// model completion claim, so an external verifier may reject and reopen it.
+pub fn complete_by_model() -> Result<Goal, String> {
+    complete_from(TerminationSource::ModelCompleted)
+}
+
+fn complete_from(source: TerminationSource) -> Result<Goal, String> {
     let goal = {
         let _guard = state::lock();
         let mut goals = state::read()?;
@@ -232,7 +242,7 @@ pub fn complete() -> Result<Goal, String> {
         goal.updated_at = now;
         goal.stop_clock(now);
         goal.waiting = None;
-        goal.terminated_by = Some(TerminationSource::UserStop);
+        goal.terminated_by = Some(source);
         goals.archived.push(goal.clone());
         goals.active = None;
         state::queue(&goals);
