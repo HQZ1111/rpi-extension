@@ -11,10 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `/jobs` command face (host bridge): `list` / `tail <jobId> [lines]` /
   `kill <jobId>` mirror the tool actions so an embedding host can cancel a job
-  without a model turn. Session scoping is enforced through the branch — a job
-  id that is not in the calling session's newest snapshot is refused — and a
-  command `kill` settles the row and appends the `cancelled` snapshot through
-  the same `settle` path as the tool
+  without a model turn. Session scoping uses the host's live branch context
+  (`GetSessionBranch` pins the active `sessionId`) compared with the live job
+  owner — never caller input or inheritable snapshot rows. Another session's
+  id is refused, a host without a reported session id fails closed, and after a
+  reload only the live table is listed/actionable. A command `kill` settles the
+  row and appends the `cancelled` snapshot through the same `settle` path as
+  the tool
 
 ## [0.1.0](https://github.com/pi-rust/rpi-package/releases/tag/rpi-background-tasks-v0.1.0) - 2026-11-10
 

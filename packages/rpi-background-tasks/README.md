@@ -121,27 +121,28 @@ work in its own UI (a status panel Stop button) needs a way to cancel without a
 model turn. The `/jobs` slash command mirrors the tool actions:
 
 ```
-/jobs list                 — this session's jobs (same text as the tool)
+/jobs list                 — this session's live jobs (same text as the tool)
 /jobs tail <jobId> [lines] — trailing output of one job
 /jobs kill <jobId>         — stop a job (same settle + persist path as the tool)
 ```
 
-Session scoping works without a host-context channel: tool arguments get
-`__rpi.sessionId` injected by the engine, command envelopes do not. Instead the
-command face reads identity from the branch — every spawn appends a full-table
-snapshot to its owning session, so a job started in **this** session always
-appears in the newest `background-tasks` entry of the current branch. A job id
-that is not in that snapshot is refused:
+Session scoping uses the host's **live branch context**, never caller input or
+persisted snapshot rows. Tool arguments get `__rpi.sessionId` injected by the
+engine; command envelopes carry no host context, so the command face asks
+`GetSessionBranch` for the active `sessionId` and compares it with the live
+job's owner. Snapshot membership is deliberately **not** authoritative: a fork
+inherits its parent's snapshot entries, and `AppendEntry` has a write-visibility
+window where a snapshot can land in whichever session is active at commit time.
 
-```text
-job 3 does not belong to this session (or its start snapshot has not been
-committed yet); background jobs can only be inspected or stopped by the session
-that started them
-```
-
-The parenthesised case is the one write-visibility window: a snapshot appended
-during an active run is committed by the engine at the turn boundary, so a host
-that cancels a job it started seconds ago must retry once the turn settles.
+- A job owned by another session is refused even when its row (and snapshot) is
+  visible in the same process. `tails`/`kill` use the same guard.
+- A host that does not report the active session id cannot authorize `/jobs`;
+  the command **fails closed** and tells the caller to use the tool from the
+  session itself.
+- After a process reload the live table is empty: `list` reports no jobs and
+  `kill` says the id is untracked rather than replaying stale snapshots.
+- Because the check is live, a job spawned during an active run is stoppable
+  immediately — no need to wait for its start snapshot to commit.
 A `kill` always settles the row and appends the `cancelled` snapshot through
 the same `settle` path the tool uses — a supervisor reading the branch sees the
 cancellation even when the kill came from the host.

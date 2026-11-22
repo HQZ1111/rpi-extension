@@ -1041,8 +1041,8 @@ fn jobs_tool(params: &Value) -> Result<String, String> {
 
 /// The owning session of one job, or `None` when the id is unknown.
 ///
-/// The command face resolves the owner from the row instead of from caller
-/// input, so `kill_job`'s own per-session guard stays the single authority.
+/// Used by the command face to compare the row's owner with the host-reported
+/// active session id; it is never used to infer who is calling.
 fn job_owner(id: u64) -> Option<String> {
     let table = table().lock().unwrap_or_else(|p| p.into_inner());
     table
@@ -1052,16 +1052,17 @@ fn job_owner(id: u64) -> Option<String> {
         .map(|job| job.owner.clone())
 }
 
-/// Read the newest `background-tasks` snapshot from the current branch.
+/// Trusted identity of the session this command invocation serves.
 ///
-/// Every spawn (and every settle) appends a full-table snapshot for its owning
-/// session, so a job started in **this** session always appears in the newest
-/// entry. This is what lets the command face enforce the same per-session guard
-/// as the tools without a host-context channel: tool arguments get
-/// `__rpi.sessionId` injected by the engine, command envelopes do not — the
-/// plugin resolves identity from the branch instead. `Ok(None)` = this session
-/// has never persisted a snapshot (no jobs started here).
-fn branch_snapshot() -> Result<Option<Value>, String> {
+/// Tool calls are stamped with `__rpi.sessionId` by the engine; command
+/// envelopes carry no host context. Rather than inferring identity from
+/// persisted snapshot rows — forked sessions inherit the parent's snapshots, so
+/// membership proves nothing about ownership — ask the host for the live branch
+/// context. `GetSessionBranch` pins the active session id in its reply.
+///
+/// A host that does not report the id cannot authorize `/jobs`: fail closed
+/// instead of falling back to caller-supplied or persisted guesses.
+fn current_command_session() -> Result<String, String> {
     let value = call_runtime(
         RuntimeActionId::GetSessionBranch,
         json!({ "customTypes": [SNAPSHOT_ENTRY] }),
@@ -1069,70 +1070,45 @@ fn branch_snapshot() -> Result<Option<Value>, String> {
     if value.get("filtered").and_then(Value::as_bool) != Some(true) {
         return Err("GetSessionBranch must confirm filtered: true".into());
     }
-    let entries = value
-        .get("entries")
-        .and_then(Value::as_array)
-        .ok_or("GetSessionBranch returned no valid entries array")?;
-    for entry in entries.iter().rev() {
-        if entry.get("type").and_then(Value::as_str) == Some("custom")
-            && entry.get("customType").and_then(Value::as_str) == Some(SNAPSHOT_ENTRY)
-        {
-            return Ok(Some(entry.get("data").cloned().unwrap_or(Value::Null)));
-        }
-    }
-    Ok(None)
-}
-
-/// The job ids the current session's newest snapshot carries.
-fn branch_job_ids(snapshot: &Value) -> Vec<String> {
-    snapshot["jobs"]
-        .as_array()
-        .map(|jobs| {
-            jobs.iter()
-                .filter_map(|job| job["id"].as_str().map(str::to_string))
-                .collect()
+    value
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            "host did not report the active session id; /jobs cannot verify which session \
+             owns a background job and refuses to act (use the `jobs` tool from the session \
+             itself)"
+                .to_string()
         })
-        .unwrap_or_default()
 }
 
-/// The error for a command-face action on a job this session does not own.
-///
-/// Distinguished from "not found" like the tool face's `exists_error`: the job
-/// may well exist, in the session that started it. Also covers the "snapshot
-/// not committed yet" window: a job spawned during a still-active run has its
-/// start snapshot queued by the engine and committed at the turn boundary, so a
-/// host that cancels mid-run must retry once the turn settles.
-fn command_guard_error(id: u64, snapshot_exists: bool) -> String {
-    if snapshot_exists {
-        format!(
-            "job {id} does not belong to this session (or its start snapshot has not been \
-             committed yet); background jobs can only be inspected or stopped by the session \
-             that started them"
-        )
-    } else {
-        format!("no background jobs belong to this session (job {id} not found here)")
-    }
-}
-
-/// Guard one command-face action: the job id must appear in this session's
-/// newest snapshot. Returns the row's owner so the underlying tool-path
+/// Guard one command-face action against the **live table**, using the host's
+/// trusted session id. Returns the row's owner so the underlying tool-path
 /// function can run unchanged.
+///
+/// A missing row is reported separately: it was either started before a process
+/// reload (the snapshot still mentions it, but nothing can be stopped) or never
+/// existed.
 fn guard_command_job(id: u64) -> Result<String, String> {
-    let snapshot = branch_snapshot()?;
-    let ids = snapshot.as_ref().map(branch_job_ids).unwrap_or_default();
-    if ids.iter().any(|job_id| job_id == &id.to_string()) {
-        return job_owner(id).ok_or_else(|| {
-            "job {id} is in this session's snapshot but not in the running table; the process \
-             was reloaded — use list to see what is actually tracked"
-                .replace("{id}", &id.to_string())
-        });
+    let caller = current_command_session()?;
+    match job_owner(id) {
+        Some(owner) if owner == caller => Ok(owner),
+        Some(_) => Err(format!(
+            "job {id} does not belong to this session; background jobs can only be inspected \
+             or stopped by the session that started them"
+        )),
+        None => Err(format!(
+            "job {id} is not tracked in this process (it may have been started before a reload, \
+             or it never existed); use list to see what is actually tracked"
+        )),
     }
-    Err(command_guard_error(id, snapshot.is_some()))
 }
 
 /// Route one `/jobs` invocation. Mirrors the `jobs` tool actions against the
-/// calling session; the per-session guard is the snapshot membership check
-/// ([`guard_command_job`]), because command envelopes carry no host context.
+/// calling session. Command envelopes carry no host context, so identity comes
+/// from the host's live branch context ([`current_command_session`]) — never
+/// from caller input or persisted snapshot membership.
 fn jobs_command_run(args: &str) -> Result<String, String> {
     let args = args.trim();
     let (verb, rest) = match args.split_once(char::is_whitespace) {
@@ -1141,21 +1117,10 @@ fn jobs_command_run(args: &str) -> Result<String, String> {
     };
     match verb.as_str() {
         "" | "list" => {
-            let snapshot = branch_snapshot()?;
-            let jobs = snapshot
-                .as_ref()
-                .and_then(|data| data["jobs"].as_array())
-                .cloned()
-                .unwrap_or_default();
-            let active = jobs
-                .iter()
-                .filter(|job| {
-                    matches!(
-                        job["status"].as_str(),
-                        Some("running") | Some("starting") | None
-                    )
-                })
-                .count();
+            let owner = current_command_session()?;
+            let listed = list_jobs(&json!({}), &owner);
+            let jobs = listed["jobs"].as_array().cloned().unwrap_or_default();
+            let active = listed["active"].as_u64().unwrap_or(0);
             let mut text = if jobs.is_empty() {
                 "No background jobs".to_string()
             } else {
@@ -1567,10 +1532,22 @@ mod tests {
     struct MockHost {
         appends: Vec<Value>,
         append_fails: bool,
+        /// Session the host reports through `GetExecutionContext`-equivalent
+        /// branch context for command invocations. `None` = legacy host that
+        /// does not report identity.
+        context_session: Option<String>,
     }
 
     fn host() -> &'static Mutex<MockHost> {
         HOST.get_or_init(|| Mutex::new(MockHost::default()))
+    }
+
+    fn set_context_session(session: Option<&str>) {
+        host().lock().unwrap().context_session = session.map(str::to_string);
+    }
+
+    fn clear_table_only() {
+        *table().lock().unwrap() = Table::default();
     }
 
     rpi_plugin_sdk::string_handler! {
@@ -1605,7 +1582,11 @@ mod tests {
                     })
                     .into_iter()
                     .collect();
-                out.write(json!({"filtered": true, "entries": entries}).to_string());
+                let mut response = json!({"filtered": true, "entries": entries});
+                if let Some(session) = &host.context_session {
+                    response["sessionId"] = json!(session);
+                }
+                out.write(response.to_string());
                 0
             }
             other => panic!("mock host does not implement action {other:?}"),
@@ -1673,7 +1654,11 @@ mod tests {
 
     fn reset() {
         *table().lock().unwrap() = Table::default();
-        *host().lock().unwrap() = MockHost::default();
+        let mut host = host().lock().unwrap();
+        *host = MockHost {
+            context_session: Some(TEST_SESSION.to_string()),
+            ..MockHost::default()
+        };
     }
 
     fn wait_for_status(id: u64, want: &str) -> Value {
@@ -2357,8 +2342,10 @@ mod tests {
         case_a_failed_snapshot_append_does_not_kill_the_job();
         case_process_tree_kill_reaches_grandchildren();
         case_command_kill_persists_the_cancelled_snapshot();
-        case_command_kill_refuses_another_sessions_job();
-        case_command_list_reads_the_branch_snapshot();
+        case_command_kill_uses_host_identity_not_snapshot_membership();
+        case_command_refuses_without_host_identity();
+        case_command_does_not_replay_a_persisted_snapshot();
+        case_command_list_reads_the_live_table();
         case_command_verbs_report_malformed_input();
         case_abi_drivers_round_trip_and_reject_bad_params();
     }
@@ -2408,10 +2395,11 @@ mod tests {
         assert!(again.contains("already finished"), "{again}");
     }
 
-    /// The command face guard: a job id that is not in the calling session's
-    /// newest snapshot belongs to another session and must be refused — the
-    /// snapshot would otherwise describe a session that does not own its rows.
-    fn case_command_kill_refuses_another_sessions_job() {
+    /// The command face guard: identity comes from the host's live branch context,
+    /// and only rows the live table attributes to **that** session are actionable.
+    /// A forked session inherits the parent's persisted snapshot rows, so snapshot
+    /// membership is not proof of ownership.
+    fn case_command_kill_uses_host_identity_not_snapshot_membership() {
         install_host();
         reset();
         let mine: Value = serde_json::from_str(
@@ -2428,26 +2416,114 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let mine_id = mine["details"]["jobId"].as_u64().unwrap().to_string();
-        let theirs_id = theirs["details"]["jobId"].as_u64().unwrap().to_string();
-        // The mock branch serves the newest append, which is the other
-        // session's snapshot: their job is stoppable, mine is not visible here.
-        let refused = run_command(&format!("kill {mine_id}"));
+        let mine_id = mine["details"]["jobId"].as_u64().unwrap();
+        let theirs_id = theirs["details"]["jobId"].as_u64().unwrap();
+        let mine_id = mine_id.to_string();
+        let theirs_id = theirs_id.to_string();
+
+        // `list` mirrors the live table for the host-reported session only.
+        let listed = run_command("list");
+        assert!(
+            listed.contains(&format!("#{mine_id} [running] mine")),
+            "{listed}"
+        );
+        assert!(
+            !listed.contains("theirs"),
+            "another session's row must not be listed: {listed}"
+        );
+
+        // A row that belongs to another session is refused even though it is
+        // present in the process (and in the branch snapshot).
+        let refused = run_command(&format!("kill {theirs_id}"));
         assert!(refused.contains("⚠️"), "{refused}");
         assert!(
             refused.contains("does not belong to this session"),
             "{refused}"
         );
-        let allowed = run_command(&format!("kill {theirs_id}"));
+
+        // The caller's own row is stoppable, and the cancel persists.
+        let allowed = run_command(&format!("kill {mine_id}"));
         assert!(allowed.contains("Stopped job"), "{allowed}");
         let appends = host().lock().unwrap().appends.clone();
-        let last = appends.last().unwrap();
-        assert_eq!(last["jobs"][0]["id"], json!(theirs_id), "{last}");
-        assert_eq!(last["jobs"][0]["status"], STATUS_CANCELLED, "{last}");
+        let last = appends.last().expect("the cancel must persist a snapshot");
+        assert!(
+            last["jobs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|job| job["id"] == json!(mine_id) && job["status"] == STATUS_CANCELLED),
+            "{last}"
+        );
+
+        // Same rows, different active context: authorization follows the
+        // host-reported identity, not the snapshot.
+        set_context_session(Some("other-session"));
+        let refused_mine = run_command(&format!("kill {mine_id}"));
+        assert!(
+            refused_mine.contains("does not belong to this session"),
+            "{refused_mine}"
+        );
+        let allowed_theirs = run_command(&format!("kill {theirs_id}"));
+        assert!(allowed_theirs.contains("Stopped job"), "{allowed_theirs}");
     }
 
-    /// `list` mirrors the tool's output against the branch snapshot.
-    fn case_command_list_reads_the_branch_snapshot() {
+    /// No host-reported identity = no authority: the command face refuses
+    /// instead of guessing from persisted rows or caller input.
+    fn case_command_refuses_without_host_identity() {
+        install_host();
+        reset();
+        let started: Value = serde_json::from_str(
+            &background_tool(&with_session(
+                json!({ "command": "sleep 30", "label": "mine" }),
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let id = started["details"]["jobId"].as_u64().unwrap();
+        set_context_session(None);
+        let listed = run_command("list");
+        assert!(listed.contains("⚠️"), "{listed}");
+        assert!(
+            listed.contains("did not report the active session id"),
+            "{listed}"
+        );
+        let refused = run_command(&format!("kill {id}"));
+        assert!(
+            refused.contains("did not report the active session id"),
+            "{refused}"
+        );
+        // The refusal must not touch the process.
+        assert_eq!(
+            find_job(id, TEST_SESSION).unwrap()["status"],
+            STATUS_RUNNING
+        );
+        set_context_session(Some(TEST_SESSION));
+        let _ = run_command(&format!("kill {id}"));
+    }
+
+    /// A process reload keeps persisted snapshots but loses the live table:
+    /// `/jobs list` must not replay history, and `/jobs kill` must say the id is
+    /// untracked rather than acting on a stale row.
+    fn case_command_does_not_replay_a_persisted_snapshot() {
+        install_host();
+        reset();
+        let started: Value = serde_json::from_str(
+            &background_tool(&with_session(
+                json!({ "command": "sleep 30", "label": "probe" }),
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let id = started["details"]["jobId"].as_u64().unwrap();
+        clear_table_only();
+        let listed = run_command("list");
+        assert!(listed.contains("No background jobs"), "{listed}");
+        let refused = run_command(&format!("kill {id}"));
+        assert!(refused.contains("not tracked in this process"), "{refused}");
+    }
+
+    /// `list` mirrors the tool's output against the live table for the caller.
+    fn case_command_list_reads_the_live_table() {
         install_host();
         reset();
         let empty = run_command("list");
