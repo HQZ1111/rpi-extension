@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep both tools available if optional `/jobs` registration fails; clarify the
+  active-session capability requirement and cross-session switch diagnostics.
+- Bound the command identity query to one newest snapshot instead of reading
+  the session's entire background-task snapshot history.
+
 ### Added
 
 - `/jobs` command face (host bridge): `list` / `tail <jobId> [lines]` /

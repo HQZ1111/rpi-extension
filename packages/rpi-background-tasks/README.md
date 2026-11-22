@@ -134,11 +134,18 @@ job's owner. Snapshot membership is deliberately **not** authoritative: a fork
 inherits its parent's snapshot entries, and `AppendEntry` has a write-visibility
 window where a snapshot can land in whichever session is active at commit time.
 
+- **Only the host's active session is actionable.** A panel for a non-active
+  session must switch to that session before invoking `/jobs`; command envelopes
+  do not identify a separate panel session. Cross-session errors name the active
+  session and ask the caller to switch rather than treating snapshots as authority.
 - A job owned by another session is refused even when its row (and snapshot) is
-  visible in the same process. `tails`/`kill` use the same guard.
-- A host that does not report the active session id cannot authorize `/jobs`;
-  the command **fails closed** and tells the caller to use the tool from the
-  session itself.
+  visible in the same process. `tail`/`kill` use the same guard.
+- The host must implement `GetSessionBranch` with `filtered: true` and a nonempty
+  live `sessionId` in the same response; SDK ABI compatibility alone does not
+  guarantee these fields. Hosts without this capability fail closed and callers
+  must use the `jobs` tool from the session itself.
+- Command registration is optional: if the host omits or rejects it, the
+  `background` and `jobs` tools remain available (rejection logs a diagnostic).
 - After a process reload the live table is empty: `list` reports no jobs and
   `kill` says the id is untracked rather than replaying stale snapshots.
 - Because the check is live, a job spawned during an active run is stoppable

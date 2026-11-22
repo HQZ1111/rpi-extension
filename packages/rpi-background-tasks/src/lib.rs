@@ -1065,7 +1065,7 @@ fn job_owner(id: u64) -> Option<String> {
 fn current_command_session() -> Result<String, String> {
     let value = call_runtime(
         RuntimeActionId::GetSessionBranch,
-        json!({ "customTypes": [SNAPSHOT_ENTRY] }),
+        json!({ "customTypes": [SNAPSHOT_ENTRY], "order": "newestFirst", "limit": 1 }),
     )?;
     if value.get("filtered").and_then(Value::as_bool) != Some(true) {
         return Err("GetSessionBranch must confirm filtered: true".into());
@@ -1095,8 +1095,8 @@ fn guard_command_job(id: u64) -> Result<String, String> {
     match job_owner(id) {
         Some(owner) if owner == caller => Ok(owner),
         Some(_) => Err(format!(
-            "job {id} does not belong to this session; background jobs can only be inspected \
-             or stopped by the session that started them"
+            "job {id} does not belong to this session (active session `{caller}`); switch to \
+             the session that started the job before using /jobs tail or /jobs kill"
         )),
         None => Err(format!(
             "job {id} is not tracked in this process (it may have been started before a reload, \
@@ -1436,7 +1436,7 @@ fn handle_event(event, _user_data) {
 
 use rpi_plugin_sdk::callbacks::free_string;
 
-rpi_plugin_sdk::export_plugin!(|api| {
+fn register_plugin(api: &PluginApi) -> i32 {
     let _ = RUNTIME.set(*api);
     if let Some(register_event) = api.register_event_handler {
         if register_event(
@@ -1513,11 +1513,13 @@ rpi_plugin_sdk::export_plugin!(|api| {
             "Inspect or stop background jobs (list | tail <jobId> [lines] | kill <jobId>)",
         );
         if register_command(name, description, jobs_command) != 0 {
-            return 1;
+            eprintln!("rpi-background-tasks: /jobs registration failed; background/jobs tools remain available");
         }
     }
     0
-});
+}
+
+rpi_plugin_sdk::export_plugin!(register_plugin);
 
 #[cfg(test)]
 mod tests {
@@ -1532,14 +1534,56 @@ mod tests {
     struct MockHost {
         appends: Vec<Value>,
         append_fails: bool,
-        /// Session the host reports through `GetExecutionContext`-equivalent
-        /// branch context for command invocations. `None` = legacy host that
+        /// Session the host reports through the live `GetSessionBranch`
+        /// context for command invocations. `None` = legacy host that
         /// does not report identity.
         context_session: Option<String>,
     }
 
     fn host() -> &'static Mutex<MockHost> {
         HOST.get_or_init(|| Mutex::new(MockHost::default()))
+    }
+
+    #[test]
+    fn optional_command_registration_failure_keeps_both_tools() {
+        use rpi_plugin_sdk::{
+            CommandHandlerFn, ToolCancelFn, ToolDestroyFn, ToolExecuteFn, ToolPollFn,
+        };
+        use std::sync::atomic::AtomicUsize;
+
+        static REGISTERED_TOOLS: AtomicUsize = AtomicUsize::new(0);
+        extern "C" fn register_tool(
+            _: *const StableToolSchema,
+            _: ToolExecuteFn,
+            _: ToolPollFn,
+            _: ToolCancelFn,
+            _: ToolDestroyFn,
+            _: FreeStringFn,
+        ) -> i32 {
+            REGISTERED_TOOLS.fetch_add(1, Ordering::SeqCst);
+            0
+        }
+        extern "C" fn reject_command(_: StbStringRef, _: StbStringRef, _: CommandHandlerFn) -> i32 {
+            -1
+        }
+
+        let _guard = table_guard();
+        install_host();
+        let mut api = *RUNTIME.get().unwrap();
+        api.register_tool = Some(register_tool);
+        api.register_event_handler = None;
+        api.register_command = Some(reject_command);
+        assert_eq!(
+            register_plugin(&api),
+            0,
+            "optional command failure must not unload the plugin"
+        );
+        assert_eq!(REGISTERED_TOOLS.load(Ordering::SeqCst), 2);
+
+        REGISTERED_TOOLS.store(0, Ordering::SeqCst);
+        api.register_command = None;
+        assert_eq!(register_plugin(&api), 0, "stripped hosts retain both tools");
+        assert_eq!(REGISTERED_TOOLS.load(Ordering::SeqCst), 2);
     }
 
     fn set_context_session(session: Option<&str>) {
