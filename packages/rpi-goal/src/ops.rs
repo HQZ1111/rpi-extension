@@ -4,7 +4,9 @@
 //! wakes the continuation worker. None of them sends a message directly.
 use crate::dispatch;
 use crate::inject;
-use crate::state::{self, Goal, GoalVerification, Goals, Status, VerdictOutcome};
+use crate::state::{
+    self, Goal, GoalVerification, Goals, Status, TerminationSource, VerdictOutcome,
+};
 use crate::status;
 
 pub fn require_active(goals: &Goals) -> Result<Goal, String> {
@@ -76,16 +78,24 @@ fn queue_active(goals: &Goals, goal: &Goal) {
     state::queue(&goals);
 }
 
-/// Flush the queued state and notice, then wake the continuation worker. Runs
-/// outside the state lock: `flush` performs host calls.
-fn finish(goal: &Goal, notice: Option<String>) -> Result<Goal, String> {
+/// Flush the queued state and notice. Runs outside the state lock: `flush`
+/// performs host calls.
+fn publish(goal: &Goal, notice: Option<String>) -> Result<Goal, String> {
     inject::queue(goal, notice);
     state::flush();
     inject::flush();
     status::publish(goal);
+    Ok(goal.clone())
+}
+
+/// Publish, then wake the continuation worker. Used only when the mutation
+/// queues work that the worker must dispatch (a not-satisfied verdict or a
+/// status change). A pass must never wake a run.
+fn finish(goal: &Goal, notice: Option<String>) -> Result<Goal, String> {
+    let goal = publish(goal, notice)?;
     dispatch::ensure_started();
     dispatch::wake();
-    Ok(goal.clone())
+    Ok(goal)
 }
 
 pub struct StartOptions {
@@ -114,6 +124,7 @@ pub fn start(options: StartOptions) -> Result<Goal, String> {
                 old.stop_clock(now);
             }
             old.updated_at = now;
+            old.terminated_by = Some(TerminationSource::UserStop);
             goals.archived.push(old);
         }
         queue_active(&goals, &goal);
@@ -221,6 +232,7 @@ pub fn complete() -> Result<Goal, String> {
         goal.updated_at = now;
         goal.stop_clock(now);
         goal.waiting = None;
+        goal.terminated_by = Some(TerminationSource::UserStop);
         goals.archived.push(goal.clone());
         goals.active = None;
         state::queue(&goals);
@@ -302,6 +314,7 @@ pub fn complete_with(goal_id: &str, summary: &str) -> Result<Goal, String> {
         goal.stop_clock(now);
         goal.waiting = None;
         goal.last_outcome = Some("completed".into());
+        goal.terminated_by = Some(TerminationSource::ModelCompleted);
         goals.archived.push(goal.clone());
         goals.active = None;
         state::queue(&goals);
@@ -337,6 +350,7 @@ pub fn block(
         goal.updated_at = now;
         goal.stop_clock(now);
         goal.waiting = None;
+        goal.terminated_by = Some(TerminationSource::ModelBlocked);
         goals.archived.push(goal.clone());
         goals.active = None;
         state::queue(&goals);
@@ -433,7 +447,7 @@ pub fn record_verification(input: VerdictInput) -> Result<Goal, String> {
         .filter(|id| !id.is_empty())
         .map(str::to_string);
 
-    let (goal, notice) = {
+    let (goal, notice, wake) = {
         let _guard = state::lock();
         let mut goals = state::read()?;
         let now = state::now_ms();
@@ -445,8 +459,9 @@ pub fn record_verification(input: VerdictInput) -> Result<Goal, String> {
         };
 
         // Resolve the goal under review. An active goal is validated against
-        // goal_id when the host passes one; an archived goal (the model
-        // completed or blocked it) is reopened by removing it from the archive.
+        // goal_id when the host passes one. Archived goals are reopened only
+        // when the model itself completed or blocked them; an explicit user
+        // stop must not be undone by a late external verdict.
         if let Some(active) = goals.active.clone() {
             if let Some(id) = &goal_id {
                 if active.id != *id {
@@ -459,23 +474,29 @@ pub fn record_verification(input: VerdictInput) -> Result<Goal, String> {
             goal.push_verification(verdict.clone());
             match input.outcome {
                 VerdictOutcome::Pass => {
-                    // A pass supersedes any queued rejection direction.
-                    goal.pending_next_action = None;
+                    // A pass supersedes any queued rejection direction and must
+                    // never start or wake a run.
+                    goal.set_pending_next_action(None);
                 }
                 VerdictOutcome::NotSatisfied => {
-                    goal.pending_next_action = next_action;
-                    if goal.status == Status::Waiting {
-                        // The verdict *is* the external input the goal waited for.
-                        goal.status = Status::Active;
-                        goal.waiting = None;
-                        goal.start_clock(now);
+                    goal.set_pending_next_action(next_action);
+                    // `goal_wait` keeps `status = Active` and stores `waiting`;
+                    // both the explicit Waiting status and that field mean the
+                    // verdict is the external input the goal was waiting for.
+                    if goal.waiting.take().is_some() {
+                        if goal.status == Status::Waiting {
+                            goal.status = Status::Active;
+                        }
+                        if goal.status.is_active() {
+                            goal.start_clock(now);
+                        }
                     }
                 }
             }
             goal.updated_at = now;
             let notice = crate::prompts::verdict_notice(&goal, &verdict);
             queue_active(&goals, &goal);
-            (goal, notice)
+            (goal, notice, input.outcome == VerdictOutcome::NotSatisfied)
         } else {
             let Some(id) = &goal_id else {
                 return Err("no active goal — pass the goal_id of the goal under review".into());
@@ -492,7 +513,22 @@ pub fn record_verification(input: VerdictInput) -> Result<Goal, String> {
                     goals.archived.push(goal.clone());
                     let notice = crate::prompts::verdict_notice(&goal, &verdict);
                     state::queue(&goals);
-                    (goal, notice)
+                    (goal, notice, false)
+                }
+                VerdictOutcome::NotSatisfied
+                    if !matches!(
+                        goal.terminated_by,
+                        Some(TerminationSource::ModelCompleted | TerminationSource::ModelBlocked)
+                    ) =>
+                {
+                    // User stop (or a legacy archive with no recorded source):
+                    // record the verdict but do not reopen or dispatch. Only an
+                    // explicit new/resumed goal may continue.
+                    goal.updated_at = now;
+                    goals.archived.push(goal.clone());
+                    let notice = crate::prompts::verdict_not_reopened(&goal, &verdict);
+                    state::queue(&goals);
+                    (goal, notice, false)
                 }
                 VerdictOutcome::NotSatisfied => {
                     // Reopen: fresh id (stale terminal tools and stale verdicts
@@ -504,17 +540,22 @@ pub fn record_verification(input: VerdictInput) -> Result<Goal, String> {
                     goal.last_output_fingerprint = None;
                     goal.safety_pause_cause = None;
                     goal.waiting = None;
-                    goal.pending_next_action = next_action;
+                    goal.terminated_by = None;
+                    goal.set_pending_next_action(next_action);
                     goal.updated_at = now;
                     goal.start_clock(now);
                     let notice = crate::prompts::verdict_notice(&goal, &verdict);
                     queue_active(&goals, &goal);
-                    (goal, notice)
+                    (goal, notice, true)
                 }
             }
         }
     };
-    finish(&goal, Some(notice))
+    if wake {
+        finish(&goal, Some(notice))
+    } else {
+        publish(&goal, Some(notice))
+    }
 }
 
 #[cfg(test)]

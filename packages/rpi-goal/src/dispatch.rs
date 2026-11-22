@@ -160,9 +160,11 @@ fn run() {
 enum Plan {
     Idle,
     Wait(Instant),
-    /// The prompt to send. `Some` overrides the standard continuation with the
-    /// verifier-directed next action queued by `_verify-result`.
-    Send(Box<Goal>, u64, Option<String>),
+    /// The prompt to send. `Some((action, token))` overrides the standard
+    /// continuation with the verifier-directed next action queued by
+    /// `_verify-result`; the token lets fold-back clear only the action this run
+    /// actually served.
+    Send(Box<Goal>, u64, Option<(String, u64)>),
     Stop(Status, String, Option<&'static str>),
 }
 
@@ -274,9 +276,12 @@ fn evaluate(goals: Goals, settings: settings::Settings, tools_available: bool) -
         goal.start_clock(now);
     }
     // A queued verifier next action replaces the generic continuation prompt.
-    // It stays in state until the run's fold-back clears it, so a stale plan
-    // (a pause that lands first) cannot drop it.
-    let verdict_prompt = goal.pending_next_action.clone();
+    // It stays in state (with its token) until the run's fold-back consumes
+    // exactly that version, so a newer verdict is never dropped by an older run.
+    let verdict_prompt = goal
+        .pending_next_action
+        .clone()
+        .map(|action| (action, goal.pending_next_action_seq));
     let mut next = goals.clone();
     next.active = Some(goal.clone());
     let revision = state::queue(&next);
@@ -298,14 +303,14 @@ fn dispatch_is_current(goal: &Goal, revision: u64) -> bool {
 
 /// Send one continuation and fold the outcome back into state. The call blocks
 /// until the run ends, so the settlement that follows is already queued.
-fn dispatch(goal: &Goal, revision: u64, verdict_prompt: Option<String>) {
+fn dispatch(goal: &Goal, revision: u64, verdict_prompt: Option<(String, u64)>) {
     if !dispatch_is_current(goal, revision) {
         return;
     }
     let first = goal.iteration <= 1;
-    let served_verdict_prompt = verdict_prompt.is_some();
+    let served_verdict = verdict_prompt.clone();
     let prompt = match verdict_prompt {
-        Some(action) => {
+        Some((action, _token)) => {
             let verdict =
                 goal.verifications
                     .last()
@@ -368,9 +373,11 @@ fn dispatch(goal: &Goal, revision: u64, verdict_prompt: Option<String>) {
                                 active.updated_at = state::now_ms();
                                 // The verifier-directed run has been served; a
                                 // completed/aborted/errored run keeps it queued
-                                // so `/goal resume` re-runs it.
-                                if served_verdict_prompt {
-                                    active.pending_next_action = None;
+                                // so `/goal resume` re-runs it. Clear only the
+                                // exact version this run served — a newer verdict
+                                // that arrived during the run must survive.
+                                if let Some((_, token)) = &served_verdict {
+                                    active.clear_pending_next_action_if_served(*token);
                                 }
                                 goals.active = Some(active);
                                 state::queue(&goals);

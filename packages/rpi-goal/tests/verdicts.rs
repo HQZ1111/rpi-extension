@@ -3,6 +3,11 @@
 //! existing continuation worker dispatches a rejected goal's next action.
 //!
 //! Acceptance: a goal that claims completion with work missing keeps going.
+//!
+//! The verdict edges are load-bearing because a rejection starts a paid model
+//! run: a pass must never wake one, a newer queued action must survive an older
+//! run's fold-back, a real `goal_wait` must be woken by the verdict it awaited,
+//! and a late verdict must not undo an explicit user stop.
 mod support;
 
 use serde_json::json;
@@ -260,4 +265,206 @@ fn verdict_rows_are_bounded_in_persisted_state() {
     let rows = goal["verifications"].as_array().unwrap();
     assert_eq!(rows.len(), rpi_goal::state::MAX_VERIFICATIONS);
     support::release_sends();
+}
+
+/// Reviewer reproduction 1: a pass on a *still active* goal must record only.
+/// The old `finish()` on every outcome woke the worker, which sent a paid
+/// generic continuation (SendMessage count 1 -> 2) without any new settle.
+#[test]
+fn an_active_goal_pass_records_without_starting_a_run() {
+    let _guard = support::serial();
+    start_goal("Active pass objective");
+
+    let goal = support::active_goal().unwrap();
+    let id = goal["id"].as_str().unwrap().to_string();
+    // Wait out the kickoff run's fold-back so the baseline is stable.
+    support::settle_pause();
+    let sends_before = support::calls_named("SendMessage").len();
+    assert_eq!(sends_before, 1, "only the kickoff ran before the verdict");
+
+    let verdict = support::command(&format!(
+        r#"_verify-result {{"goalId":"{id}","outcome":"pass","reason":"external check green"}}"#
+    ));
+    assert!(
+        verdict["text"].as_str().unwrap().contains("pass"),
+        "{verdict}"
+    );
+
+    // No new AgentSettled, no wake: nothing may be dispatched.
+    support::sleep(200);
+    assert_eq!(
+        support::calls_named("SendMessage").len(),
+        sends_before,
+        "a pass on an active goal must not start a run"
+    );
+    let goal = support::active_goal().expect("the goal stays active");
+    assert_eq!(goal["status"], json!("active"));
+    assert_eq!(goal["verifications"].as_array().unwrap().len(), 1);
+    assert_eq!(goal["verifications"][0]["outcome"], json!("pass"));
+    assert!(
+        goal["pendingNextAction"].is_null(),
+        "a pass clears a queued rejection direction: {goal}"
+    );
+}
+
+/// Reviewer reproduction 2: the fold-back of run A must consume only the
+/// pending action version A actually served. A verdict B that arrives while A
+/// is in flight survives A's `completed` return and is the one dispatched.
+#[test]
+fn a_newer_next_action_survives_an_older_runs_fold_back() {
+    let _guard = support::serial();
+    start_goal("Overlapping verdicts objective");
+
+    let goal = support::active_goal().unwrap();
+    let id = goal["id"].as_str().unwrap().to_string();
+
+    // Park the worker inside the first verdict run, like a slow model turn.
+    support::block_sends(true);
+    support::command(&format!(
+        r#"_verify-result {{"goalId":"{id}","outcome":"notSatisfied","reason":"first pass","nextAction":"Fix the first finding"}}"#
+    ));
+    let first = support::wait_sends_mentioning("Fix the first finding", 1, TIMEOUT);
+    assert_eq!(first.len(), 1, "the first verdict run must be in flight");
+
+    // Still blocked in SendMessage: a newer verdict arrives and queues B.
+    support::command(&format!(
+        r#"_verify-result {{"goalId":"{id}","outcome":"notSatisfied","reason":"second pass","nextAction":"Fix the second finding"}}"#
+    ));
+    let goal = support::active_goal().unwrap();
+    assert_eq!(
+        goal["pendingNextAction"].as_str().unwrap(),
+        "Fix the second finding"
+    );
+
+    // Release the first run; its fold-back must not clear the newer action.
+    // The wake B recorded while A was in flight then dispatches B itself.
+    support::release_sends();
+    let second = support::wait_sends_mentioning("Fix the second finding", 1, TIMEOUT);
+    assert_eq!(
+        second.len(),
+        1,
+        "the newer action must be the one dispatched"
+    );
+    support::sleep(150);
+    assert_eq!(
+        support::sends_mentioning("Fix the first finding").len(),
+        1,
+        "the older action must not run again"
+    );
+    assert_eq!(
+        support::sends_mentioning("Fix the second finding").len(),
+        1,
+        "the newer action must dispatch exactly once"
+    );
+    let goal = support::active_goal().unwrap();
+    assert_eq!(goal["verifications"].as_array().unwrap().len(), 2);
+    assert!(
+        goal["pendingNextAction"].is_null(),
+        "B's own fold-back consumes B"
+    );
+}
+
+/// Reviewer reproduction 3: `goal_wait` keeps the goal `active` and stores
+/// `waiting` (no deadline) — the rejection verdict is exactly the external
+/// input it waited for, so it must clear the wait and dispatch the next action.
+#[test]
+fn a_verdict_wakes_a_real_goal_wait() {
+    let _guard = support::serial();
+    start_goal("Waiting for external input");
+
+    let goal = support::active_goal().unwrap();
+    let id = goal["id"].as_str().unwrap().to_string();
+    support::tool(
+        "goal_wait",
+        json!({"goal_id": id, "reason": "waiting for the verifier"}),
+    )
+    .expect("the wait must be accepted");
+    support::sleep(120);
+    let goal = support::active_goal().unwrap();
+    assert_eq!(goal["status"], json!("active"), "goal_wait keeps active");
+    assert_eq!(goal["waiting"]["reason"], json!("waiting for the verifier"));
+    assert!(goal["activeSince"].is_null(), "the wait stops the clock");
+    let sends_before = support::calls_named("SendMessage").len();
+    assert_eq!(
+        sends_before, 1,
+        "a dateless wait parks the goal: no continuation may run"
+    );
+
+    support::command(&format!(
+        r#"_verify-result {{"goalId":"{id}","outcome":"notSatisfied","reason":"found gaps","nextAction":"Close the gaps the verifier found"}}"#
+    ));
+    let sends = support::wait_sends_mentioning("Close the gaps the verifier found", 1, TIMEOUT);
+    assert_eq!(sends.len(), 1, "the verdict must wake the wait");
+    let goal = support::active_goal().unwrap();
+    assert!(
+        goal["waiting"].is_null(),
+        "the verdict is the external input the goal was waiting for: {goal}"
+    );
+    assert!(
+        !goal["activeSince"].is_null(),
+        "the active clock restarts after the wait is released"
+    );
+}
+
+/// Reviewer reproduction 4: `/goal stop` is the user's decision. A late
+/// verifier rejection for that goal id is recorded as history but must not
+/// reopen it or start a run.
+#[test]
+fn a_late_verdict_does_not_reopen_a_user_stop() {
+    let _guard = support::serial();
+    start_goal("User-stopped objective");
+
+    let goal = support::active_goal().unwrap();
+    let id = goal["id"].as_str().unwrap().to_string();
+    support::command("stop");
+    support::sleep(120);
+    assert!(
+        support::active_goal().is_none(),
+        "the stop archived the goal"
+    );
+    let sends_after_stop = support::calls_named("SendMessage").len();
+
+    let verdict = support::command(&format!(
+        r#"_verify-result {{"goalId":"{id}","outcome":"notSatisfied","reason":"late finding","nextAction":"Fix it after the stop"}}"#
+    ));
+    assert!(
+        verdict["text"]
+            .as_str()
+            .unwrap()
+            .contains("Verification recorded"),
+        "{verdict}"
+    );
+    support::sleep(200);
+    assert!(
+        support::active_goal().is_none(),
+        "a late verdict must not reopen a user-stopped goal"
+    );
+    assert_eq!(
+        support::calls_named("SendMessage").len(),
+        sends_after_stop,
+        "a late verdict on a user stop must not start a run"
+    );
+
+    // The verdict is kept as history on the archived row, with the original id.
+    let archived = support::goal_state().unwrap()["archived"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(archived["id"].as_str().unwrap(), id);
+    assert_eq!(archived["terminatedBy"], json!("userStop"));
+    assert_eq!(archived["verifications"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        archived["verifications"][0]["outcome"],
+        json!("notSatisfied")
+    );
+
+    // The transcript notice states the narrow contract.
+    assert!(
+        support::calls_named("AppendEntry")
+            .iter()
+            .any(|call| call.to_string().contains("not reopened")),
+        "the notice must say the verdict was recorded but not reopened"
+    );
 }

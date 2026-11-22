@@ -121,17 +121,26 @@ continuation worker — nothing here reworks the state machine.
 - `notSatisfied` requires `nextAction`. The verdict is appended to the goal's
   bounded `verifications` row (50 rows, 2,000-char fields), and `nextAction` is
   queued as the goal's pending next action.
-- If the goal was still active, it stays active; a waiting goal is woken. If the
-  model had already archived the goal (`complete`/`blocked`), it is reopened with
-  a fresh id — stale terminal tools and stale verdicts for the old id fail.
+- If the goal was still active, it stays active. A real `goal_wait` (status
+  still `active` plus a `waiting` field, with or without a deadline) is
+  released: the verdict is exactly the external input the goal waited for, so
+  the wait clears, the active clock restarts, and the next action dispatches.
+- If the model itself had archived the goal (`goal_complete` / `goal_blocked`),
+  it is reopened with a fresh id — stale terminal tools and stale verdicts for
+  the old id fail. A goal the user stopped (`/goal stop` and its aliases) is
+  **never** reopened: the verdict is recorded as history and the notice says
+  so. Archived rows carry their termination source (`terminatedBy`:
+  `modelCompleted` / `modelBlocked` / `userStop`); a legacy row without one is
+  treated as a user stop, and only an explicit new/resumed goal continues.
 - The continuation worker dispatches the queued next action at the next wake,
   never into a live run; the run prompt quotes the verdict as untrusted task
-  data. A completed, aborted, or errored verdict run keeps the goal looping as
-  usual.
+  data. Each queued action is versioned, and a run's fold-back consumes only the
+  version it actually served — a verdict arriving while an older verdict run is
+  in flight survives and is dispatched next.
 - If the goal is stopped (`paused`/`usage_limited`/`budget_limited`), the
   verdict and next action are recorded and wait for `/goal resume`.
-- `pass` records only. It clears any queued next action and never starts a run;
-  on an archived goal it leaves the goal archived.
+- `pass` records only. It clears any queued next action and never starts or
+  wakes a run; on an archived goal it leaves the goal archived.
 - Nothing in the plugin produces verdicts. Without an embedding host calling
   `_verify-result`, behavior is exactly the plain 0.3 loop.
 

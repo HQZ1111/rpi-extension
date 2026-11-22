@@ -119,6 +119,17 @@ pub enum VerdictOutcome {
     NotSatisfied,
 }
 
+/// Why a goal left the active slot. A verifier verdict may reopen a goal only
+/// when the model itself completed/blocked it; an explicit user stop must not
+/// be undone by a late external result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TerminationSource {
+    ModelCompleted,
+    ModelBlocked,
+    UserStop,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoalVerification {
@@ -214,6 +225,16 @@ pub struct Goal {
     /// the goal is stopped keeps it queued for `/goal resume`.
     #[serde(default)]
     pub pending_next_action: Option<String>,
+    /// Monotonic token for [`Self::pending_next_action`]. A run records the
+    /// token it actually served; its fold-back may clear the action only while
+    /// the token still matches, so a newer verdict is never dropped by an older
+    /// run finishing.
+    #[serde(default)]
+    pub pending_next_action_seq: u64,
+    /// Termination source for archived goals (`None` = legacy row). Only
+    /// model-side completion/blocking may be reopened by a verifier verdict.
+    #[serde(default)]
+    pub terminated_by: Option<TerminationSource>,
 }
 
 impl Goal {
@@ -244,6 +265,8 @@ impl Goal {
             last_outcome: None,
             verifications: Vec::new(),
             pending_next_action: None,
+            pending_next_action_seq: 0,
+            terminated_by: None,
         }
     }
 
@@ -272,6 +295,24 @@ impl Goal {
             self.verifications.remove(0);
         }
         self.verifications.push(verdict);
+    }
+
+    /// Replace the queued verifier action and advance its token. Every write
+    /// (including a clear) invalidates previously served tokens, so an older
+    /// run's fold-back cannot consume a newer verdict.
+    pub fn set_pending_next_action(&mut self, next: Option<String>) {
+        self.pending_next_action = next;
+        self.pending_next_action_seq = self.pending_next_action_seq.wrapping_add(1);
+    }
+
+    /// Clear the queued action only if the run served exactly this token.
+    /// Returns `false` (leaving the newer action intact) on a stale token.
+    pub fn clear_pending_next_action_if_served(&mut self, served_seq: u64) -> bool {
+        if self.pending_next_action_seq != served_seq {
+            return false;
+        }
+        self.set_pending_next_action(None);
+        true
     }
 
     /// Human-readable budget line, e.g. `turns 3/20 · time 12m0s left`.

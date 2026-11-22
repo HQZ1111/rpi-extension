@@ -137,6 +137,20 @@ pub fn verdict_notice(goal: &Goal, verdict: &crate::state::GoalVerification) -> 
     }
 }
 
+/// A rejection for a goal the user explicitly stopped: the verdict is kept as
+/// history, but it must not reopen the goal or start a run.
+pub fn verdict_not_reopened(goal: &Goal, verdict: &crate::state::GoalVerification) -> String {
+    let reason = verdict
+        .reason
+        .as_deref()
+        .map(|reason| format!(" — {}", reason.trim()))
+        .unwrap_or_default();
+    format!(
+        "🔁 Verifier rejected the goal \"{}\"{reason}; it was stopped by the user, so the verdict was recorded but not reopened. Start a new goal to continue.",
+        goal.title
+    )
+}
+
 /// `/goal resume` from a waiting state: the objective and id are unchanged, but
 /// the external precondition must be rechecked.
 pub fn wait_resume(goal: &Goal, reason: &str) -> String {

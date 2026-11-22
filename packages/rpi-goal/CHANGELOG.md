@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/goal _verify-result` host bridge: embedding hosts record completion-verification
   verdicts (`pass` / `notSatisfied` with a bounded `verifications` row); a rejected
   goal queues the verifier's `nextAction` and the existing continuation worker
-  dispatches it at the next wake (reopening an archived goal with a fresh id). The
-  seven states are untouched — a verdict is a record plus a queued direction
+  dispatches it at the next wake (reopening a model-archived goal with a fresh id,
+  never one the user stopped). The seven states are untouched — a verdict is a
+  record plus a queued direction
 - automatic continuation from the settled boundary: one goal-owned run per
   `AgentSettled` through the blocking `SendMessage` action, serialized by a single
   continuation worker
@@ -41,6 +42,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- a `pass` verdict records and notifies only: recording no longer wakes the
+  continuation worker, so an active goal no longer starts a stray generic run
+  after a passing verification
+- a verifier-rejection verdict is bound to an explicit termination source
+  (`terminatedBy`: `modelCompleted` / `modelBlocked` / `userStop`); only a goal
+  the model itself completed or blocked may be reopened by a verdict, so a late
+  `notSatisfied` can no longer undo an explicit `/goal stop` (a legacy archived
+  row without a source is treated as a user stop)
+- a `notSatisfied` verdict releases a real `goal_wait` (status `active` with a
+  `waiting` field), not only the legacy `waiting` status: the verdict is the
+  external input the goal waited for, so the wait is cleared, the active clock
+  restarts, and the next action is dispatched
+- the pending next action is versioned: a verdict run's fold-back clears only
+  the version it actually served, so a newer verdict that arrives while an older
+  verdict run is still in flight survives to be dispatched next
 - token usage and interruption classification now come from the assistant message
   carried by `MessageEnd` (the host does not dispatch `AfterProviderResponse` to
   plugins), and are read with the host's camelCase field names
